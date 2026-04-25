@@ -1,0 +1,20 @@
+{
+    "coreDIR": "C:\\BazisMebelschik_kitchen",
+    "draweDIR": "C:\\BazisMebelschik_kitchen\\#_Документы\\Чертежи",
+    "db_options": {
+        "host": "localhost",
+        "database": "C:\\BazisMebelschik_kitchen\\DataBase\\SmartWood_DB.FDB",
+        "port": 14357,
+        "user": "SYSDBA",
+        "password": "masterkey",
+        "lowercase_keys": false,
+        "role": null,
+        "pageSize": 4096
+    },
+    "creator": "SmartWood (Роман Багаев)",
+    "delimPrjSign": "-",
+    "delimPrjName": "^",
+    "excludeMaterials": [
+        "Фурнитура и наполнение"
+    ]
+}
