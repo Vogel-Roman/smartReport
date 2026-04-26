@@ -24,3 +24,10 @@ panels:[
     },
     {…}
 ]
+
+{
+    name:"Имя файла полный путь",
+    model:{},
+    estimate:{},
+    panelMaterials:[],
+}

@@ -1,10 +1,7 @@
-﻿
-
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 const { XMLParser } = require('fast-xml-parser');
 const ExcelJS = require('exceljs');
-const { count } = require('console');
 
 //  Расширения обрабатываемых файлов
 const extensions = ['.fr3d', '.b3d'];
@@ -65,6 +62,7 @@ function processingPanel(obj, options) {
         material: obj.MaterialName,
         materialName: mName,
         materialArticle: mArt,
+        sync_ext: undefined,    //  Код синхронизации материала
         materialTkn: obj.Thickness,
         barcode_data: PROFECT_NAME + settings.delimPrjName + prjPos,
         pos: obj.ArtPos,
@@ -74,7 +72,8 @@ function processingPanel(obj, options) {
         name: obj.Name,
         width: pnlWidth,
         height: pnlHeight,
-        area: round(pnlWidth * pnlHeight * 0.000001, 2)
+        area: round(pnlWidth * pnlHeight * 0.000001, 2),
+        contourLength: round(obj.Contour.ObjLength() * 0.001, 2)
     });
 };
 
@@ -118,12 +117,68 @@ function sortByProperty(array, property, ascending = true) {
         if (valueA > valueB) return ascending ? 1 : -1;
         return 0;
     });
-}
+};
 
 
 //#endregion
 
 //#region Функции обработки файлов проекта
+
+//  Функция заполнения общих данных текущей модели
+function getModelData(data) {
+    if (!data) return;
+    data.model = {
+        orderCode: Article.Code,
+        orderName: Article.OrderName,
+        enterprise: settings.enterprise || "SmartWood",
+        author: settings.author || "Vogel",
+    };
+    //console.log(JSON.stringify(data.model, null, 2));
+};
+
+async function getEstimateData(data) {
+    //console.log(JSON.stringify(data, null, 2));
+    data.estimate = {
+        panelMaterials: [],
+        profileMaterials: [],
+        furnitureMaterials: []
+    };
+
+    //  Функция суммирования значений данных Материала
+    function sumByPanelMaterial(items) {
+        const grouped = items.reduce((acc, item) => {
+            const key = item.materialName;
+
+            if (!acc[key]) {
+                acc[key] = {
+                    materialName: key,
+                    materialArticle: item.materialArticle,
+                    materialTkn: item.materialTkn,
+                    materialSyncExternal: "",
+                    materialClassArray: [],
+                    materialPrice: 0,
+                    area: 0,
+                    contourLength: 0
+                };
+            };
+
+            //  Площадь деталей
+            acc[key].area += item.area || 0;
+
+            //  Длина контуров деталей
+            acc[key].contourLength += item.contourLength || 0;
+
+            return acc;
+        }, {});
+
+        return Object.values(grouped);
+    };
+
+    if (data.data.panelMaterials) {
+        let grouped = sumByPanelMaterial(data.data.panelMaterials);
+        data.estimate.panelMaterials = [...grouped];
+    };
+};
 
 //  Функция получения данных, описывающих файлы Проекта
 function getProjectFilesData() {
@@ -307,7 +362,8 @@ async function createMaterialExcel(data, outputDir) {
 
 async function generateAllExcelFiles(array) {
     let message = "Укажите папку для сохранения файлов спецификаций";
-    const folder = system.askFolder(message, path.dirname(PROJECT_FILE));
+    //const folder = system.askFolder(message, path.dirname(PROJECT_FILE));
+    const folder = "C:\\Users\\Roman\\Desktop\\test_project";
 
     //  Функция группировки объектов по материалам
     function groupByMaterial(items) {
@@ -361,6 +417,80 @@ async function generateAllExcelFiles(array) {
 
 //#endregion
 
+//#region Функции формирвоания файла сметы
+async function generateEstimateFile(arr_data) {
+
+    function getListMaterialNames(array) {
+        let result = [];
+        array.map((item, index) => {
+            result.push(item.materialName);
+        });
+        return result;
+    };
+
+    //  Функция группировки объектов по материалам
+    function groupByPanelMaterial(items) {
+
+        // Группируем
+        const grouped = items.reduce((acc, item, index) => {
+
+            const key = item.materialName;
+
+            if (!acc[key]) {
+                // Создаем новую группу
+                acc[key] = {
+                    id: Object.keys(acc).length + 1,
+                    materialName: item.materialName,
+                    materialArticle: item.materialArticle,
+                    materialTkn: item.materialTkn,
+                    materialSyncExternal: item.materialSyncExternal,
+                    materialClassArray: [],
+                    materialPrice: 0,
+                    area: 0,
+                    contourLength: 0
+                };
+            };
+
+            //  Площадь деталей
+            acc[key].area += item.area || 0;
+
+            //  Длина контуров деталей
+            acc[key].contourLength += item.contourLength || 0;
+
+            return acc;
+        }, {});
+
+        // Превращаем объект в массив
+        return Object.values(grouped);
+    };
+
+    const folder = path.dirname(PROJECT_FILE);
+
+    //  Объединяем элементы из всех файлов в общие массивы
+    let arr_panelMaterials = [];
+
+    for (let i = 0; i < arr_data.length; i++) {
+        const model_data = arr_data[i];
+
+        //  Заполняем массив листовых материалов
+        arr_panelMaterials.push(...model_data.estimate.panelMaterials);
+
+    };
+
+    let grouped_panelMaterials = groupByPanelMaterial(arr_panelMaterials);
+
+    //  Формируем список наименований материлов для обращения в Базу материалов
+    let listMaterials = [...getListMaterialNames(grouped_panelMaterials)];
+
+
+    //  Получение данных из Базы материалов
+
+    console.log(JSON.stringify(grouped_panelMaterials, null, 2));
+
+
+};
+
+//#endregion
 //  Основная функция
 function main() {
 
@@ -385,6 +515,15 @@ function main() {
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, selectObjectProcess, prj_arr[ind]);
 
+                //  Заполняем общую информацию о модели
+                getModelData(prj_arr[ind]);
+
+                //  Формируем данные для сметы
+                if (settings.estimate) await getEstimateData(prj_arr[ind]);
+
+
+                //console.log(JSON.stringify(prj_arr[ind].estimate, null, 2));
+
                 /*****************************************************/
                 count++;
             };
@@ -400,9 +539,10 @@ function main() {
             //  Завершение обработки массива файлов.
 
             //  Запуск функции генерации файлов EXCEL
-            await generateAllExcelFiles(prj_arr);
+            //await generateAllExcelFiles(prj_arr);
 
             //  Запуск функции создания Сметы
+            if (settings.estimate) await generateEstimateFile(prj_arr);
 
             console.log(`Обработано ${count} файлов из ${prj_arr.length}`);
             Action.Finish();

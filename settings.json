@@ -11,7 +11,15 @@
         "role": null,
         "pageSize": 4096
     },
-    "creator": "SmartWood (Роман Багаев)",
+    "author": "Роман Багаев",
+    "estimate": true,
+    "enterprise": {
+        "name": "Смарт-Вуд",
+        "address": "6900105, г.Владивосток",
+        "site": "mkb-smartwood.ru",
+        "phone": "+7(914)707-27-88",
+        "email": "mkb.smartwood@gmail.com"
+    },
     "delimPrjSign": "-",
     "delimPrjName": "^",
     "excludeMaterials": [
