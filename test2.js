@@ -448,8 +448,9 @@ async function createEstimateExcelFile(arr_data, outputDir) {
         },
         alignment: { vertical: 'middle', horizontal: 'center' },
         font: {
-            name: 'Calibri',
-            size: 11,
+            name: 'Arial',
+            size: 9,
+            bold: true,
             color: { argb: 'FFFFFFFF' },
         }
     };
@@ -463,7 +464,7 @@ async function createEstimateExcelFile(arr_data, outputDir) {
             right: { style: 'thin', color: { argb: borderColor } }
         },
         alignment: { indent: 1, horizontal: 'right', vertical: 'middle' },
-        font: { name: 'Calibri', size: 11 }
+        font: { name: 'Arial', size: 8 }
     };
 
     //  Создание вкладок по изделиям
@@ -474,12 +475,13 @@ async function createEstimateExcelFile(arr_data, outputDir) {
 
         // ---------- КОЛОНКИ ----------
         worksheet.columns = [
-            { header: '№', key: 'ind', width: 10 },
-            { header: 'Номенклатура', key: 'material', width: 80 },
+            { header: '№', key: 'ind', width: 5.42 },
+            { header: 'Номенклатура', key: 'material', width: 35 }, // 34,48
             { header: 'Кол-во', key: 'count', width: 10 },
             { header: 'Ед. изм.', key: 'unit', width: 10 },
             { header: 'Цена', key: 'price', width: 20 },
             { header: 'Сумма', key: 'sum', width: 20 },
+            { header: '1', key: 'е', width: 0.67 },
         ];
 
         // ---------- СТИЛЬ ШАПКИ ----------
