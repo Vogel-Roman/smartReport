@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "exceljs": "^3.4.0",
-    "fast-xml-parser": "^5.7.2"
+    "fast-xml-parser": "^5.7.2",
+    "node-firebird": "^0.1.2"
   }
 }

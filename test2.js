@@ -2,6 +2,7 @@
 const path = require('path');
 const { XMLParser } = require('fast-xml-parser');
 const ExcelJS = require('exceljs');
+const firebird = require('node-firebird');
 
 //  Расширения обрабатываемых файлов
 const extensions = ['.fr3d', '.b3d'];
@@ -19,6 +20,9 @@ const settings = JSON.parse(data);
 //  Инициализация констант
 const PROJECT_FILE = system.askFileName('bprj');
 const PROFECT_NAME = system.getFileNameWithoutExtension(PROJECT_FILE);
+
+let message = "Укажите папку для сохранения файлов спецификаций";
+const FOLDER = system.askFolder(message, path.dirname(PROJECT_FILE));
 
 //#region Функции рекурсивного обхода
 
@@ -62,7 +66,9 @@ function processingPanel(obj, options) {
         material: obj.MaterialName,
         materialName: mName,
         materialArticle: mArt,
-        sync_ext: undefined,    //  Код синхронизации материала
+        materialSyncExternal: "",    //  Код синхронизации материала
+        materialPrice: 0,
+        materialUnit: "",
         materialTkn: obj.Thickness,
         barcode_data: PROFECT_NAME + settings.delimPrjName + prjPos,
         pos: obj.ArtPos,
@@ -128,8 +134,8 @@ function sortByProperty(array, property, ascending = true) {
 function getModelData(data) {
     if (!data) return;
     data.model = {
-        orderCode: Article.Code,
-        orderName: Article.OrderName,
+        orderCode: Article.OrderName,
+        orderName: Article.Name,
         enterprise: settings.enterprise || "SmartWood",
         author: settings.author || "Vogel",
     };
@@ -306,8 +312,8 @@ async function createMaterialExcel(data, outputDir) {
         { header: 'Кол-во', key: 'count', width: 10 },
         { header: 'Площадь', key: 'area', width: 10 },
         { header: 'Толщина', key: 'tkn', width: 10 },
-        { header: 'Код синхр.', key: 'code', width: 20 },
-        //{ header: 'Артикул', key: 'material_art', width: 12 },
+        { header: 'Код синхр.', key: 'sync_ext', width: 20 },
+        { header: 'Артикул', key: 'material_art', width: 20 },
         { header: 'Материал', key: 'material', width: 80 }
     ];
 
@@ -327,7 +333,8 @@ async function createMaterialExcel(data, outputDir) {
             height: item.height,
             count: item.prjCount,
             area: item.area,
-            sync_ext: "",
+            sync_ext: item.materialSyncExternal,
+            material_art: item.materialArticle,
             material: item.materialName
         });
 
@@ -360,10 +367,8 @@ async function createMaterialExcel(data, outputDir) {
     await workbook.xlsx.writeFile(filePath);
 };
 
-async function generateAllExcelFiles(array) {
-    let message = "Укажите папку для сохранения файлов спецификаций";
-    //const folder = system.askFolder(message, path.dirname(PROJECT_FILE));
-    const folder = "C:\\Users\\Roman\\Desktop\\test_project";
+async function generateSpecificationFiles(array) {
+    //const folder = "C:\\Users\\Roman\\Desktop\\test_project";
 
     //  Функция группировки объектов по материалам
     function groupByMaterial(items) {
@@ -408,7 +413,7 @@ async function generateAllExcelFiles(array) {
         result[i].array = sortByProperty(result[i].array);
 
         //  Создание спецификации для загрузки
-        await createMaterialExcel(result[i], folder);
+        await createMaterialExcel(result[i], FOLDER);
 
         //  Создание печатной спецификации.
     };
@@ -418,6 +423,123 @@ async function generateAllExcelFiles(array) {
 //#endregion
 
 //#region Функции формирвоания файла сметы
+
+async function createEstimateExcelFile(arr_data, outputDir) {
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = settings.creator;
+    workbook.created = new Date();
+
+    const borderColor = 'FFD9D9D9';
+    const row_h = 18;
+
+    //  Стиль строки заголовка
+    let headerRowStyle = {
+        fill: {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF4472C4' }
+        },
+        border: {
+            top: { style: 'thin', color: { argb: borderColor } },
+            left: { style: 'thin', color: { argb: borderColor } },
+            bottom: { style: 'thin', color: { argb: borderColor } },
+            right: { style: 'thin', color: { argb: borderColor } }
+        },
+        alignment: { vertical: 'middle', horizontal: 'center' },
+        font: {
+            name: 'Calibri',
+            size: 11,
+            color: { argb: 'FFFFFFFF' },
+        }
+    };
+
+    //  Стиль строки
+    let rowStyle = {
+        border: {
+            top: { style: 'thin', color: { argb: borderColor } },
+            left: { style: 'thin', color: { argb: borderColor } },
+            bottom: { style: 'thin', color: { argb: borderColor } },
+            right: { style: 'thin', color: { argb: borderColor } }
+        },
+        alignment: { indent: 1, horizontal: 'right', vertical: 'middle' },
+        font: { name: 'Calibri', size: 11 }
+    };
+
+    //  Создание вкладок по изделиям
+    for (let i = 0; i < arr_data.length; i++) {
+        const obj = arr_data[i];
+        const sheetName = `${obj.sign}_${obj.model.orderName}`.substring(0, 31);
+        const worksheet = workbook.addWorksheet(sheetName);
+
+        // ---------- КОЛОНКИ ----------
+        worksheet.columns = [
+            { header: '№', key: 'ind', width: 10 },
+            { header: 'Номенклатура', key: 'material', width: 80 },
+            { header: 'Кол-во', key: 'count', width: 10 },
+            { header: 'Ед. изм.', key: 'unit', width: 10 },
+            { header: 'Цена', key: 'price', width: 20 },
+            { header: 'Сумма', key: 'sum', width: 20 },
+        ];
+
+        // ---------- СТИЛЬ ШАПКИ ----------
+        const headerRow = worksheet.getRow(1);
+        headerRow.height = row_h;
+        styleCellRange(headerRow, 1, worksheet.columns.length, headerRowStyle);
+
+        // ---------- ДАННЫЕ ----------
+        obj.estimate.panelMaterials.forEach((item, index) => {
+
+            const rn = index + 2;           // +2 из-за заголовка
+            worksheet.addRow({
+                ind: index + 1,             //  A
+                material: item.materialName,//  B
+                count: item.area,           //  C
+                unit: item.materialUnit,    //  D
+                price: item.materialPrice,  //  E
+                sum: 0                      //  F
+            });
+
+            //  Формула суммы
+            worksheet.getCell(`F${rn}`).value = {
+                formula: `C${rn}*E${rn}`,
+                result: (item.price || 0) * (item.count || 0)
+            };
+
+            //  Устанавливаем форматирвоание числа 0,00
+            worksheet.getCell(`C${rn}`).numFmt = '#,##0.00';
+            worksheet.getCell(`E${rn}`).numFmt = '#,##0.00';
+            worksheet.getCell(`F${rn}`).numFmt = '#,##0.00';
+
+            const currentRow = worksheet.getRow(index + 2);
+            currentRow.height = row_h;
+            styleCellRange(currentRow, 1, worksheet.columns.length, rowStyle);
+
+            // Чередование фона
+            if (index % 2 === 0) {
+                styleCellRange(currentRow, 1, worksheet.columns.length, {
+                    fill: {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFF2F2F2' }
+                    }
+                });
+            };
+
+            // Выравнивание
+            currentRow.getCell('material').alignment = { indent: 1, horizontal: 'left' };
+        });
+
+        // ---------- ЗАКРЕПЛЕНИЕ СТРОКИ ----------
+        worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    };
+
+    // ---------- СОХРАНЕНИЕ ----------
+    const fileName = `${sanitizeFileName(PROFECT_NAME + "_Калькуляция проекта")}.xlsx`;
+    const filePath = path.join(outputDir, fileName);
+    await workbook.xlsx.writeFile(filePath);
+};
+
 async function generateEstimateFile(arr_data) {
 
     function getListMaterialNames(array) {
@@ -446,6 +568,7 @@ async function generateEstimateFile(arr_data) {
                     materialSyncExternal: item.materialSyncExternal,
                     materialClassArray: [],
                     materialPrice: 0,
+                    materialUnit: "",
                     area: 0,
                     contourLength: 0
                 };
@@ -464,8 +587,6 @@ async function generateEstimateFile(arr_data) {
         return Object.values(grouped);
     };
 
-    const folder = path.dirname(PROJECT_FILE);
-
     //  Объединяем элементы из всех файлов в общие массивы
     let arr_panelMaterials = [];
 
@@ -475,6 +596,11 @@ async function generateEstimateFile(arr_data) {
         //  Заполняем массив листовых материалов
         arr_panelMaterials.push(...model_data.estimate.panelMaterials);
 
+        //  Заполняем массив кромочных материалов
+
+        //  Заполняем массив погонных материалов
+
+        //  Заполняем массив фурнитуры
     };
 
     let grouped_panelMaterials = groupByPanelMaterial(arr_panelMaterials);
@@ -482,15 +608,118 @@ async function generateEstimateFile(arr_data) {
     //  Формируем список наименований материлов для обращения в Базу материалов
     let listMaterials = [...getListMaterialNames(grouped_panelMaterials)];
 
-
     //  Получение данных из Базы материалов
+    const dbMaterialData = await getDBMaterialInfo(listMaterials);
 
-    console.log(JSON.stringify(grouped_panelMaterials, null, 2));
+    // Быстрый доступ через Map
+    const dbDataMap = new Map(
+        dbMaterialData.map(item => [item.name_mat.toLowerCase(), item])
+    );
+
+    // Дополняем grouped_panelMaterials
+    for (const panelMaterial of grouped_panelMaterials) {
+        const dbItem = dbDataMap.get(panelMaterial.materialName.toLowerCase());
+        if (dbItem) {
+            panelMaterial.materialPrice = dbItem.price;
+            panelMaterial.syncExternal = dbItem.sync_external;
+            panelMaterial.materialTkn = dbItem.thickness;
+            panelMaterial.materialUnit = dbItem.name_meas;
+            panelMaterial.dimensions = {
+                length: dbItem.length,
+                width: dbItem.width,
+                tkn: dbItem.thickness
+            };
+        };
+    };
+
+    // Дополняем данные в спецификациях деталей и сметы
+    for (let i = 0; i < arr_data.length; i++) {
+        const obj = arr_data[i];
+        for (const panelMaterial of obj.data.panelMaterials) {
+            const dbItem = dbDataMap.get(panelMaterial.materialName.toLowerCase());
+            if (dbItem) {
+                panelMaterial.materialPrice = dbItem.price;
+                panelMaterial.materialSyncExternal = dbItem.sync_external;
+                panelMaterial.materialTkn = dbItem.thickness;
+                panelMaterial.materialUnit = dbItem.name_meas;
+            };
+        };
+
+        for (const panelMaterial of obj.estimate.panelMaterials) {
+            const dbItem = dbDataMap.get(panelMaterial.materialName.toLowerCase());
+            if (dbItem) {
+                panelMaterial.materialPrice = dbItem.price;
+                panelMaterial.materialSyncExternal = dbItem.sync_external;
+                panelMaterial.materialTkn = dbItem.thickness;
+                panelMaterial.materialUnit = dbItem.name_meas;
+            };
+        };
+    };
+
+    //console.log('done');
+    await createEstimateExcelFile(arr_data, FOLDER);
 
 
 };
 
 //#endregion
+
+//#region Запрос в Базу данных
+
+//  Функция получения данных о материалах из Базы материалов
+async function getDBMaterialInfo(matnames) {
+    //  Функция выполнения запроса в БД
+    async function executeQuery(sql, options, params = []) {
+        return new Promise((resolve, reject) => {
+            firebird.attach(options, (err, db) => {
+                if (err) {
+                    reject(err);
+                    return;
+                };
+                db.query(sql, params, (err, result) => {
+                    db.detach();
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(result);
+                    };
+                });
+            });
+        });
+    };
+
+    try {
+        const options = settings.db_options || null;
+
+        //  Строка запроса
+        const sqlString = `
+        SELECT
+        m.NAME_MAT,
+        m.PRICE,
+        m.SYNC_EXTERNAL,
+        ma.LENGTH,
+        ma.WIDTH,
+        ma.THICKNESS,
+        me.NAME_MEAS
+        FROM MATERIAL AS m
+        INNER JOIN MATERIAL_ADVANCE AS ma ON m.ID_M = ma.ID_M
+        LEFT JOIN MEASURE AS me ON m.ID_MS = me.ID_MS
+        WHERE m.NAME_MAT IN (${matnames.map(() => '?').join(',')})
+        `;
+        //  Запрос в БД
+        const result = await executeQuery(sqlString, options, matnames);
+
+        //console.log(`Получено записей: ${result.length}`);
+        //console.log(JSON.stringify(result, null, 2));
+        return result;
+    } catch (e) {
+        console.error("Ошибка:", e.message);
+        Action.Finish();
+    };
+};
+
+//#endregion
+
 //  Основная функция
 function main() {
 
@@ -519,7 +748,7 @@ function main() {
                 getModelData(prj_arr[ind]);
 
                 //  Формируем данные для сметы
-                if (settings.estimate) await getEstimateData(prj_arr[ind]);
+                await getEstimateData(prj_arr[ind]);
 
 
                 //console.log(JSON.stringify(prj_arr[ind].estimate, null, 2));
@@ -538,11 +767,11 @@ function main() {
 
             //  Завершение обработки массива файлов.
 
-            //  Запуск функции генерации файлов EXCEL
-            //await generateAllExcelFiles(prj_arr);
-
             //  Запуск функции создания Сметы
-            if (settings.estimate) await generateEstimateFile(prj_arr);
+            await generateEstimateFile(prj_arr);
+
+            //  Запуск функции генерации файлов EXCEL
+            await generateSpecificationFiles(prj_arr);
 
             console.log(`Обработано ${count} файлов из ${prj_arr.length}`);
             Action.Finish();
