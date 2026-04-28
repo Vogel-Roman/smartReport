@@ -155,6 +155,7 @@ async function createForm() {
         const headerRowInd = 6;
         const headerRow = worksheet.getRow(headerRowInd);
         const start_col = 2;
+
         //  Стиль строки заголовка
         headerRowTableStyle(headerRow, start_col, worksheet.columns.length);
 
