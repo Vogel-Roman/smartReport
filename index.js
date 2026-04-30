@@ -232,15 +232,15 @@ function callbackFunc(item, data) {
 
 //  Функция обработки данных панели
 function panelProcessing(panel, modelData) {
+    const material = getMaterialName(panel);
+
     //  Игнорируем исключенные материалы
     const excludeMaterial = settings.exclude.panelMaterial;
-    if (excludeMaterial.includes(panel.MaterialName)) return;
+    if (excludeMaterial.includes(material[0])) return;
 
     const dps = settings.delimPrjSign;
     const dpn = settings.delimPrjName;
     const ms = modelData.sign;
-
-    const material = getMaterialName(panel);
 
     //  Размеры панели
     const w = round(panel.ContourWidth, 1);
