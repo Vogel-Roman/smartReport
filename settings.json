@@ -27,7 +27,8 @@
             "Фурнитура и наполнение"
         ],
         "profileMaterial": [],
-        "furnitureMaterial": []
+        "furnitureMaterial": [],
+        "minHoleDiameter": 3
     },
     "excludeMaterials": [
         "Фурнитура и наполнение"

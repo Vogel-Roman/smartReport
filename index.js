@@ -11,6 +11,9 @@ const firebird = require('node-firebird');
 const ExcelJS = require('exceljs');
 const { XMLParser } = require('fast-xml-parser');
 
+// Допуск для сравнения с нулем
+const EPS = 1e-10;
+
 //  Расширения обрабатываемых файлов
 const extensions = ['.fr3d', '.b3d'];
 
@@ -62,6 +65,12 @@ function round(a, b) {
     return Math.round(a * Math.pow(10, b)) / Math.pow(10, b);
 };
 
+//  Функция очистки значения от неточности записи
+function clean(val) {
+    if (Math.abs(val) < EPS) return 0;
+    return Math.round(val * 10) / 10;
+};
+
 //  Функция добавляющая лидирующие нули
 function addZero(value, length = 3) {
     // Преобразуем в строку и добавляем нули
@@ -69,14 +78,119 @@ function addZero(value, length = 3) {
 };
 
 //  Функция получения артикула и названия материала из имени
-function getMaterialName(material) {
-    let mName = material;
+function getMaterialName(panel) {
+    let mName = panel.MaterialName;
     let mArt = "";
-    if (material.indexOf("\r") > 0) {
+    if (mName.indexOf("\r") > 0) {
         mArt = mName.split("\r")[1];
         mName = mName.split("\r")[0];
     };
     return [mName, mArt];
+};
+
+// Функция поиска отверстий принадлежжащих панели
+function findPanelHolesList(panel) {
+
+    //  Функция вычисления конечной точки отверстия
+    function getHoleEndPoint(hole, fastener, panel) {
+        // 1. Вычисляем конец отверстия в локальной системе фурнитуры
+        const dir = hole.Direction;
+        const depth = hole.Depth;
+
+        // Нормализуем направление (на случай если вектор не единичный)
+        const len = Math.hypot(dir.x, dir.y, dir.z);
+        const normDir = {
+            x: dir.x / len,
+            y: dir.y / len,
+            z: dir.z / len
+        };
+
+        // Точка конца: устье + направление * глубина
+        const endLocal = {
+            x: hole.Position.x + normDir.x * depth,
+            y: hole.Position.y + normDir.y * depth,
+            z: hole.Position.z + normDir.z * depth
+        };
+
+        // 2. Переводим в глобальные координаты
+        let endGlobal = fastener.ToGlobal(endLocal);
+
+        // 3. Переводим в локальную систему координат панели
+        let endInPanel = panel.ToObject(endGlobal);
+
+        return endInPanel;
+    };
+
+    function cleanPoint(point, decimal) {
+        return {
+            x: clean(point.x),
+            y: clean(point.y),
+            z: clean(point.z)
+        };
+    };
+
+    function isPointInBounds(point, minPoint, maxPoint) {
+        // Определяем реальные минимумы и максимумы на случай,
+        // если minPoint и maxPoint переданы не в правильном порядке
+        const minX = Math.min(minPoint.x, maxPoint.x);
+        const maxX = Math.max(minPoint.x, maxPoint.x);
+        const minY = Math.min(minPoint.y, maxPoint.y);
+        const maxY = Math.max(minPoint.y, maxPoint.y);
+        const minZ = Math.min(minPoint.z, maxPoint.z);
+        const maxZ = Math.max(minPoint.z, maxPoint.z);
+
+        // Проверяем, что точка находится в пределах по каждой оси
+        return point.x >= minX && point.x <= maxX &&
+            point.y >= minY && point.y <= maxY &&
+            point.z >= minZ && point.z <= maxZ;
+    };
+
+    //  Массив отверстий
+    const result = [];
+
+    //  Массив фурнитуры, принадлежащей панели
+    let fasteners = panel.FindConnectedFasteners();
+    if (!fasteners) return result;
+
+    fasteners.forEach(fastener => {
+        if (!fastener) return;
+
+        fastener.Holes.List.forEach(hole => {
+            if (!hole) return;
+
+            //  Фильрация отверстий по минимальному диаметру
+            const minDiameter = settings.exclude.minHoleDiameter;
+
+            if (hole.Radius * 2 < minDiameter) return;
+
+            let posInPanel =
+                cleanPoint(panel.ToObject(fastener.ToGlobal(hole.Position)), 1);
+            let dirInPanel =
+                panel.NToObject(fastener.NToGlobal(hole.Direction));
+            dirInPanel = cleanPoint(dirInPanel, 1);
+
+            // Анализируем dirInPanel.z
+            const isPerpendicular = Math.abs(dirInPanel.z) > 0.99;
+            const isParallel = Math.abs(dirInPanel.z) < 0.01;
+
+            // Координаты конечной точки отверстия в ГСК
+            let endInPanel =
+                cleanPoint(getHoleEndPoint(hole, fastener, panel), 1);
+
+            if (isPointInBounds(endInPanel, panel.GMin, panel.GMax)) {
+                result.push({
+                    depth: round(hole.Depth, 2),
+                    diameter: hole.Radius * 2,
+                    depth: round(hole.Depth, 1),
+                    drillMode: hole.DrillMode,
+                    dirInPanel: dirInPanel,
+                    positionInPanel: posInPanel
+                });
+            };
+        });
+    });
+    //console.log(JSON.stringify(result, null, 2));
+    return result;
 };
 
 //#endregion
@@ -122,7 +236,11 @@ function panelProcessing(panel, modelData) {
     const excludeMaterial = settings.exclude.panelMaterial;
     if (excludeMaterial.includes(panel.MaterialName)) return;
 
-    const material = getMaterialName(panel.MaterialName);
+    const dps = settings.delimPrjSign;
+    const dpn = settings.delimPrjName;
+    const ms = modelData.sign;
+
+    const material = getMaterialName(panel);
 
     //  Размеры панели
     const w = round(panel.ContourWidth, 1);
@@ -135,18 +253,20 @@ function panelProcessing(panel, modelData) {
     const contourLength = round(panel.Contour.ObjLength() * 0.001, 2);
 
     //  Позиция панели в проекте M2-0012
-    const projectPos =
-        modelData.sign + settings.delimPrjSign + addZero(obj.ArtPos);
+    const projectPos = panel.ArtPos ?
+        modelData.sign + dps + addZero(panel.ArtPos) : "";
 
     //  Обозначение панели в проекте M2-0012
     const projectDes =
-        modelData.sign + settings.delimPrjSign + addZero(obj.Designation);
+        panel.Designation ? ms + dps + addZero(panel.Designation) : "";
 
     //  Текст в QR-коде (Позиция – ArtPos)
-    const barcodeData = PROJECT_NAME + settings.delimPrjName + projectPos;
+    const barcodeData = panel.ArtPos ?
+        PROJECT_NAME + dpn + projectPos : "";
 
     //  Текст в QR-коде (Обозначение – Designation)
-    const barcodeDataDes = PROJECT_NAME + settings.delimPrjName + projectDes;
+    const barcodeDataDes = panel.Designation ?
+        PROJECT_NAME + dpn + projectDes : "";
 
     //  Информация о кромках панели
     const buttInfoArray = [];
@@ -155,7 +275,7 @@ function panelProcessing(panel, modelData) {
     const cutInfoArray = [];
 
     //  Информация о присадке панелей
-    const drillInfoArray = [];
+    const drillInfoArray = findPanelHolesList(panel);
 
     //  Информация о облицовки пласти
     const plasticInfoArray = [];
@@ -193,7 +313,7 @@ function profileProcessing(profile, modelData) {
     const excludeMaterial = settings.exclude.profileMaterial;
     if (excludeMaterial.includes(profile.MaterialName)) return;
 
-    const material = getMaterialName(profile.MaterialName);
+    //const material = getMaterialName(profile.MaterialName);
 
 };
 
@@ -204,7 +324,7 @@ function furnitureProcessing(fastener, modelData) {
     if (excludeMaterial.includes(fastener.MaterialName)) return;
 
     //  !!!! Тут нужна проверка на составную фурнитуру !!!!!!
-    const material = getMaterialName(fastener.MaterialName);
+    //const material = getMaterialName(fastener.MaterialName);
 };
 
 //#endregion
@@ -299,8 +419,7 @@ function main() {
             if (Action.LoadModel(filepath)) {
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, callbackFunc, prj_array[ind]);
-                console.log(prj_array[ind].name);
-
+                //console.log(prj_array[ind].name);
                 count++;
             };
         };
@@ -314,6 +433,7 @@ function main() {
 
 
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);
+            //console.log(JSON.stringify(prj_array, null, 2));
             Action.Finish();
         };
     };

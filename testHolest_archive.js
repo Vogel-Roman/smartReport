@@ -6,11 +6,6 @@ function round(a, b) {
     return Math.round(a * Math.pow(10, b)) / Math.pow(10, b);
 };
 
-function clean(val) {
-    if (Math.abs(val) < EPS) return 0;
-    return Math.round(val * 10) / 10;
-};
-
 
 function main() {
     function getHoleEndPoint(hole, fastener, panel) {
@@ -43,28 +38,17 @@ function main() {
     };
 
     function cleanPoint(point, decimal) {
+        const factor = Math.pow(10, decimal);
+        const clean = (val) => {
+            if (Math.abs(val) < EPS) return 0;
+            return Math.round(val * factor) / factor;
+        };
+
         return {
             x: clean(point.x),
             y: clean(point.y),
             z: clean(point.z)
         };
-    };
-
-
-    function isPointInBounds(point, minPoint, maxPoint) {
-        // Определяем реальные минимумы и максимумы на случай,
-        // если minPoint и maxPoint переданы не в правильном порядке
-        const minX = Math.min(minPoint.x, maxPoint.x);
-        const maxX = Math.max(minPoint.x, maxPoint.x);
-        const minY = Math.min(minPoint.y, maxPoint.y);
-        const maxY = Math.max(minPoint.y, maxPoint.y);
-        const minZ = Math.min(minPoint.z, maxPoint.z);
-        const maxZ = Math.max(minPoint.z, maxPoint.z);
-
-        // Проверяем, что точка находится в пределах по каждой оси
-        return point.x >= minX && point.x <= maxX &&
-            point.y >= minY && point.y <= maxY &&
-            point.z >= minZ && point.z <= maxZ;
     }
 
     let panel = Model.Selected;
@@ -73,11 +57,20 @@ function main() {
     let fasteners = panel.FindConnectedFasteners();
     if (!fasteners) Action.Finish();
 
+    const panelGab = {
+        w: panel.ContourWidth,
+        h: panel.ContourHeight,
+        t: panel.Thickness
+    };
+
     const result = [];
 
     fasteners.forEach(fastener => {
         if (!fastener) return;
-        //console.log(fastener.Name);
+
+        console.log(fastener.Name);
+        console.log('---');
+
 
         fastener.Holes.List.forEach(hole => {
             if (!hole) return;
@@ -92,10 +85,10 @@ function main() {
 
             let endInPanel = cleanPoint(getHoleEndPoint(hole, fastener, panel), 1);
 
-            // console.log(isPointInBounds(endInPanel, panel.GMin, panel.GMax));
-            // console.log('-------');
-
-            if (isPointInBounds(endInPanel, panel.GMin, panel.GMax)
+            if (
+                (endInPanel.x >= 0 && endInPanel.x <= panelGab.w) &&
+                (endInPanel.y >= 0 && endInPanel.y <= panelGab.h) &&
+                (endInPanel.z >= 0 && endInPanel.z <= panelGab.t)
             ) {
                 result.push({
                     depth: round(hole.Depth, 2),
