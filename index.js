@@ -1,224 +1,330 @@
-﻿const ExcelJS = require('exceljs');
-const path = require('path');
+﻿/******************************************************************************/
+/***       Скрипт на формирование отчетов из Проектов Базис в Excel         ***/
+/***                         SmartWood Reports v1.0                         ***/
+/******************************************************************************/
+
+//#region Инициализация
+
 const fs = require('fs');
+const path = require('path');
+const firebird = require('node-firebird');
+const ExcelJS = require('exceljs');
+const { XMLParser } = require('fast-xml-parser');
 
-// ==========================================
-// ТВОИ ДАННЫЕ
-// ==========================================
-const materials = [
-    {
-        materialName: "ДСП 16мм Белый",
-        items: [
-            { pos: "1", width: 356, height: 230, name: "Панель горизонт" },
-            { pos: "2", width: 356, height: 500, name: "Боковая панель левая" },
-            { pos: "3", width: 356, height: 500, name: "Боковая панель правая" },
-            { pos: "4", width: 500, height: 350, name: "Полка" }
-        ]
-    },
-    {
-        materialName: "МДФ 10мм Серый",
-        items: [
-            { pos: "1", width: 200, height: 300, name: "Фасад верхний" },
-            { pos: "2", width: 200, height: 500, name: "Фасад нижний" }
-        ]
-    },
-    {
-        materialName: "ЛДСП 22мм Дуб",
-        items: [
-            { pos: "1", width: 600, height: 400, name: "Столешница" },
-            { pos: "2", width: 150, height: 700, name: "Ножка стола" },
-            { pos: "3", width: 150, height: 700, name: "Ножка стола 2" }
-        ]
-    }
-];
+//  Расширения обрабатываемых файлов
+const extensions = ['.fr3d', '.b3d'];
 
-// ==========================================
-// НАСТРОЙКИ
-// ==========================================
-const dir_name = 'excel_output'; // Папка для сохранения файлов
+// Проверяем существование файла и читаем файл настроек settings.json 
+if (!fs.existsSync("settings.json"))
+    errFinish("Отсутсвует файл настроек: settings.json");
 
-// ==========================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ==========================================
+//  Считываем данные и удаляем BOM если он есть
+let settings_data = fs.readFileSync("settings.json", { encoding: "utf-8" });
+if (settings_data.charCodeAt(0) === 0xFEFF)
+    settings_data = settings_data.slice(1);
 
-// Безопасное имя файла
-function sanitizeFileName(name) {
-    return name
-        .replace(/[<>:"/\\|?*]/g, '')
-        .replace(/\s+/g, '_')
-        .substring(0, 200);
-}
+//  Проверка структуры файла settings.json
+if (!checkSettingsData(settings_data))
+    errFinish("Ошибки в строуктуре файла конфигурации: settings.json");
 
-// Создание папки, если её нет
-function ensureDir(dir) {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-}
+//  Данные настроек внешнего файла
+const settings = JSON.parse(settings_data);
 
-// ==========================================
-// ОСНОВНАЯ ФУНКЦИЯ СОЗДАНИЯ ФАЙЛА ДЛЯ ОДНОГО МАТЕРИАЛА
-// ==========================================
-async function createMaterialExcel(materialData, outputDir) {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Мебельный конструктор';
-    workbook.created = new Date();
+//  Инициализация констант
+const PROJECT_FILE = system.askFileName('bprj');
+if (!PROJECT_FILE) errFinish("Файл проекта не выбран");
+const PROJECT_NAME = system.getFileNameWithoutExtension(PROJECT_FILE);
 
-    // Лист с именем материала (ограничение Excel — 31 символ)
-    const sheetName = materialData.materialName.substring(0, 31);
-    const worksheet = workbook.addWorksheet(sheetName);
+//  Путь к папке для сохранения результата
+let message = "Укажите папку для сохранения файлов спецификаций";
+const FOLDER = system.askFolder(message, path.dirname(PROJECT_FILE));
+if (!FOLDER) errFinish("Директория сохранения результата не выбрана");
 
-    // ---------- КОЛОНКИ ----------
-    worksheet.columns = [
-        { header: '№ позиции', key: 'pos', width: 12 },
-        { header: 'Наименование', key: 'name', width: 35 },
-        { header: 'Ширина, мм', key: 'width', width: 15 },
-        { header: 'Высота, мм', key: 'height', width: 15 },
-        { header: 'Площадь, м²', key: 'area', width: 15 }
-    ];
+//#endregion
 
-    // ---------- СТИЛЬ ШАПКИ ----------
-    const headerRow = worksheet.getRow(1);
-    headerRow.height = 25;
-    headerRow.font = {
-        name: 'Arial',
-        size: 12,
-        bold: true,
-        color: { argb: 'FFFFFFFF' }
-    };
-    headerRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FF4472C4' }
-    };
-    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+//#region Служебные функции
 
-    headerRow.eachCell((cell) => {
-        cell.border = {
-            top: { style: 'thin' },
-            left: { style: 'thin' },
-            bottom: { style: 'thin' },
-            right: { style: 'thin' }
-        };
-    });
-
-    // ---------- ДАННЫЕ ----------
-    materialData.items.forEach((item, index) => {
-        const area = parseFloat(((item.width * item.height) / 1_000_000).toFixed(3));
-
-        const row = worksheet.addRow({
-            pos: item.pos,
-            name: item.name,
-            width: item.width,
-            height: item.height,
-            area: area
-        });
-
-        const currentRow = worksheet.getRow(index + 2);
-        currentRow.height = 20;
-        currentRow.font = { name: 'Arial', size: 11 };
-
-        // Чередование фона
-        if (index % 2 === 0) {
-            currentRow.fill = {
-                type: 'pattern',
-                pattern: 'solid',
-                fgColor: { argb: 'FFF2F2F2' }
-            };
-        }
-
-        // Выравнивание
-        currentRow.getCell('pos').alignment = { horizontal: 'center' };
-        currentRow.getCell('width').alignment = { horizontal: 'center' };
-        currentRow.getCell('height').alignment = { horizontal: 'center' };
-        currentRow.getCell('area').alignment = { horizontal: 'center' };
-        currentRow.getCell('name').alignment = { horizontal: 'left' };
-
-        // Границы
-        currentRow.eachCell((cell) => {
-            cell.border = {
-                top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-                left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-                bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-                right: { style: 'thin', color: { argb: 'FFD9D9D9' } }
-            };
-        });
-    });
-
-    // ---------- ИТОГОВАЯ СТРОКА ----------
-    const totalRow = worksheet.addRow({
-        pos: '',
-        name: 'ИТОГО:',
-        width: '',
-        height: '',
-        area: 0
-    });
-
-    const totalRowNumber = materialData.items.length + 2;
-    const lastRow = worksheet.getRow(totalRowNumber);
-
-    const totalArea = materialData.items.reduce((sum, item) => {
-        return sum + (item.width * item.height) / 1_000_000;
-    }, 0);
-
-    lastRow.getCell('area').value = parseFloat(totalArea.toFixed(3));
-    lastRow.font = { name: 'Arial', size: 11, bold: true };
-    lastRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFD9E2F3' }
-    };
-
-    lastRow.eachCell((cell) => {
-        cell.border = {
-            top: { style: 'medium', color: { argb: 'FF4472C4' } },
-            left: { style: 'thin' },
-            bottom: { style: 'medium' },
-            right: { style: 'thin' }
-        };
-    });
-
-    // ---------- АВТОФИЛЬТР + ЗАКРЕПЛЕНИЕ СТРОКИ ----------
-    worksheet.autoFilter = {
-        from: { row: 1, column: 1 },
-        to: { row: materialData.items.length + 1, column: 5 }
-    };
-
-    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-
-    // ---------- СОХРАНЕНИЕ ----------
-    const fileName = `${sanitizeFileName(materialData.materialName)}.xlsx`;
-    const filePath = path.join(outputDir, fileName);
-    await workbook.xlsx.writeFile(filePath);
-
-    console.log(`✅ ${fileName}`);
-    console.log(`   Позиций: ${materialData.items.length} | Общая площадь: ${totalArea.toFixed(3)} м²\n`);
-}
-
-// ==========================================
-// ГЛАВНАЯ ФУНКЦИЯ — ГЕНЕРАЦИЯ ВСЕХ ФАЙЛОВ
-// ==========================================
-async function generateAllExcelFiles(materialsData) {
-    console.log('🚀 Запуск генерации Excel-файлов...\n');
-
-    const directory = path.dirname(Action.ModelFilename);
-    const output_dir = path.join(directory, dir_name);
-    ensureDir(output_dir);
-
-    for (const material of materialsData) {
-        try {
-            await createMaterialExcel(material, output_dir);
-        } catch (error) {
-            console.error(`❌ Ошибка для "${material.materialName}":`, error.message);
-        }
-    }
-
-    console.log(`✨ Готово! Файлы сохранены в папку "${output_dir}"`);
+//  Функция обработки ошибок
+function errFinish(str) {
+    console.log(str);
     Action.Finish();
-}
+};
 
-// ==========================================
-// ЗАПУСК
-// ==========================================
-generateAllExcelFiles(materials);
+//  Функция проверка структуры файла settings.json
+function checkSettingsData(data) {
+    //  Написать алгоритм проверки струкруты файла
+    return true;
+};
+
+//  Функция огругления
+function round(a, b) {
+    b = b || 0;
+    return Math.round(a * Math.pow(10, b)) / Math.pow(10, b);
+};
+
+//  Функция добавляющая лидирующие нули
+function addZero(value, length = 3) {
+    // Преобразуем в строку и добавляем нули
+    return String(value).padStart(length, '0');
+};
+
+//  Функция получения артикула и названия материала из имени
+function getMaterialName(material) {
+    let mName = material;
+    let mArt = "";
+    if (material.indexOf("\r") > 0) {
+        mArt = mName.split("\r")[1];
+        mName = mName.split("\r")[0];
+    };
+    return [mName, mArt];
+};
+
+//#endregion
+
+//#region Функции рекурсивного обхода
+
+//  Функция рекурсивного обхода модели
+function forEachInList(list, func, data) {
+    if (!func) return;
+    for (let i = 0; i < list.Count; i++) {
+        let elem = list.Objects[i];
+        func(elem, data);
+        if (
+            elem.List &&
+            (elem instanceof TFurnBlock || elem instanceof TDraftBlock)
+        ) forEachInList(elem.AsList(), func, data);
+    };
+};
+
+//  Call-back функция
+function callbackFunc(item, data) {
+
+    if (item instanceof TFurnPanel) {
+        //  Панель
+        panelProcessing(item, data);
+    } else if (item instanceof TExtrusionBody) {
+        //  Профиль
+        profileProcessing(item, data);
+    } else if (item instanceof TFurnAsm || item instanceof TFastener) {
+        //  Фурнитура или сборка (покупное изделие)
+        furnitureProcessing(item, data);
+    };
+
+};
+
+//#endregion
+
+//#region Функции обработки объектов Модели
+
+//  Функция обработки данных панели
+function panelProcessing(panel, modelData) {
+    //  Игнорируем исключенные материалы
+    const excludeMaterial = settings.exclude.panelMaterial;
+    if (excludeMaterial.includes(panel.MaterialName)) return;
+
+    const material = getMaterialName(panel.MaterialName);
+
+    //  Размеры панели
+    const w = round(panel.ContourWidth, 1);
+    const h = round(panel.ContourHeight, 1);
+
+    //  Площадь панели в метрах
+    const panelArea = round(w * h * 0.000001, 2)
+
+    //  Длина контура панели в метрах
+    const contourLength = round(panel.Contour.ObjLength() * 0.001, 2);
+
+    //  Позиция панели в проекте M2-0012
+    const projectPos =
+        modelData.sign + settings.delimPrjSign + addZero(obj.ArtPos);
+
+    //  Обозначение панели в проекте M2-0012
+    const projectDes =
+        modelData.sign + settings.delimPrjSign + addZero(obj.Designation);
+
+    //  Текст в QR-коде (Позиция – ArtPos)
+    const barcodeData = PROJECT_NAME + settings.delimPrjName + projectPos;
+
+    //  Текст в QR-коде (Обозначение – Designation)
+    const barcodeDataDes = PROJECT_NAME + settings.delimPrjName + projectDes;
+
+    //  Информация о кромках панели
+    const buttInfoArray = [];
+
+    //  Информация о пазах панели
+    const cutInfoArray = [];
+
+    //  Информация о присадке панелей
+    const drillInfoArray = [];
+
+    //  Информация о облицовки пласти
+    const plasticInfoArray = [];
+
+    modelData.data.panelMaterials.push({
+        material: panel.MaterialName,   //  Материал панели
+        materialName: material[0],      //  Имя материала панели
+        materialArticle: material[1],   //  Артикул материала панели
+        materialSyncExternal: "",       //  Код синхронизации материала (DB)
+        materialPrice: 0,               //  Цена из базы данных (DB)
+        materialUnit: "",               //  Единица измерения (DB)
+        materialTkn: panel.Thickness,   //  Толщина материала
+        prjCount: modelData.count,      //  Количество
+        pos: panel.ArtPos,              //  Позиция в модели
+        des: panel.Designation,         //  Обозначение в модели
+        prjPos: projectPos,             //  Позиция в проекте
+        prjDes: projectDes,             //  Обозначение в проекте
+        barcode: barcodeData,           //  Код панели в проекте (Pos)
+        barcode_des: barcodeDataDes,    //  Код панели в проекте (Designation)
+        name: panel.Name,               //  Имя панели
+        width: w,                       //  Длина панели
+        height: h,                      //  Ширина панели
+        area: panelArea,                //  Площадь панели
+        contourLength: contourLength,   //  Длина контура панели
+        buttInfo: buttInfoArray,        //  Массив кромок панели
+        cutInfo: cutInfoArray,          //  Массив пазов панели
+        drillInfo: drillInfoArray,      //  Массив отверстий панели
+        plasticInfo: plasticInfoArray   //  Массив облицовки пласти панели
+    });
+};
+
+//  Функция обработки данных профиля
+function profileProcessing(profile, modelData) {
+    //  Игнорируем исключенные материалы
+    const excludeMaterial = settings.exclude.profileMaterial;
+    if (excludeMaterial.includes(profile.MaterialName)) return;
+
+    const material = getMaterialName(profile.MaterialName);
+
+};
+
+//  Функция обработки данных фурнитуры
+function furnitureProcessing(fastener, modelData) {
+    //  Игнорируем исключенные материалы
+    const excludeMaterial = settings.exclude.furnitureMaterial;
+    if (excludeMaterial.includes(fastener.MaterialName)) return;
+
+    //  !!!! Тут нужна проверка на составную фурнитуру !!!!!!
+    const material = getMaterialName(fastener.MaterialName);
+};
+
+//#endregion
+
+//#region Функции обработки файлов Проекта
+
+//  Функция получения данных файлов Проекта
+function readProjectFilesData(prj_file) {
+    try {
+        // Читаем файл проекта (XML-файл по структуре);
+        const xmlData = fs.readFileSync(PROJECT_FILE, 'utf8');
+
+        // Настройки парсера
+        const options = {
+            ignoreAttributes: false,  // Не игнорировать атрибуты
+            attributeNamePrefix: "@_", // Префикс для атрибутов
+            isArray: (name, jpath, isLeafNode, isAttribute) => {
+                // Автоматически превращать в массив эти теги
+                return ['File'].includes(name);
+            }
+        };
+        const parser = new XMLParser(options);
+        const prjData = parser.parse(xmlData);
+
+        // Получаем доступ к данным списка файлов Проекта
+        const listFiles = prjData.Document.DataProject.ListFiles.File;
+
+        //  Массив результата обхода структуры проекта
+        const result_array = [];
+
+        //  Обходим циклом массив и собираем данные о файле проекта.
+        listFiles.forEach(elem => {
+            //  Путь до текущего файла проекта
+            const filePath = path.join(settings.coreDIR, elem.Name);
+            if (!fs.existsSync(filePath))
+                errFinish(`Файл по указанному пути не существует: ${filePath}`);
+
+            //  Добавляем данные из файла Проекта в массив
+            result_array.push({
+                type: elem.Type,
+                name: path.basename(filePath),
+                dirname: path.dirname(filePath),
+                filepath: filePath,
+                sign: elem.Sign,
+                count: elem.Count,
+                subname: elem.SubName,
+                note: elem.Note,
+                comment: elem.Comment,
+                estimate: elem.HasUse_Estimate == "Y" ? 1 : 0,
+                cutting: elem.HasUse_Cutting == "Y" ? 1 : 0,
+                cnc: elem.HasUse_CNC == "Y" ? 1 : 0,
+                data: {     //  Контейнер для информации из Модели
+                    panelMaterials: [],
+                    profileMaterials: [],
+                    furnitureMaterials: []
+                },
+                esimate: {}
+            });
+        });
+
+        //  Возвращаем результат
+        return result_array;
+    } catch (e) {
+        errFinish(e.message);
+    };
+};
+
+//#endregion
+
+
+// ---------- ОСНОВНАЯ ФУНКЦИЯ ---------- 
+function main() {
+
+    let ind = 0;    //  Индекс файла Проекта
+    let count = 0;  //  Счетчик обработанных файлов
+
+    let prj_array = readProjectFilesData(PROJECT_FILE);
+
+    //  Функция рекурсивного обхода массива файлов Проекта
+    async function processNextFile() {
+        //  Путь до текущего файла проекта
+        const filepath = prj_array[ind].filepath;
+
+        // Вывод прогресса обработки файлов Проекта
+        Action.Hint =
+            `обработка файла ${ind + 1} из ${prj_array.length} – ${filepath}`;
+
+        //  Проверяем расширение текущего файла
+        if (extensions.indexOf(path.extname(filepath)) >= 0) {
+
+            //  Загружаем текущую Модель Проекта
+            if (Action.LoadModel(filepath)) {
+                //  Рекурсивный обход текущей модели
+                forEachInList(Model, callbackFunc, prj_array[ind]);
+                console.log(prj_array[ind].name);
+
+                count++;
+            };
+        };
+
+        ind++;
+        if (ind < prj_array.length) {
+            // Обработка следующего файла
+            Action.AsyncExec(processNextFile);
+        } else {
+            //alert(`Обработано ${count} файлов из ${prj_array.length}`);
+
+
+            console.log(`Обработано ${count} файлов из ${prj_array.length}`);
+            Action.Finish();
+        };
+    };
+
+    //  Запуск функции рекурсивного обхода файлов Проекта
+    if (prj_array.length > 0) processNextFile();
+
+    //console.log(JSON.stringify(prj_array, null, 2));
+    //Action.Finish();
+};
+
+main();
 Action.Continue();
+/******************************************************************************/
