@@ -78,8 +78,8 @@ function addZero(value, length = 3) {
 };
 
 //  Функция получения артикула и названия материала из имени
-function getMaterialName(panel) {
-    let mName = panel.MaterialName;
+function getMaterialName(matname) {
+    let mName = matname;
     let mArt = "";
     if (mName.indexOf("\r") > 0) {
         mArt = mName.split("\r")[1];
@@ -189,8 +189,44 @@ function findPanelHolesList(panel) {
             };
         });
     });
-    //console.log(JSON.stringify(result, null, 2));
     return result;
+};
+
+//  Функция получения информации о кромках панели
+function findPanelButtsList(panel) {
+    const result = [];
+
+    for (let i = 0; i < panel.Contour.Count; i++) {
+        if (!panel.Contour[i].Data.Butt) continue;
+
+        const elem = panel.Contour[i].Data.Butt;
+        if (!elem.Thickness) continue;
+
+        const overhung = elem.Overhung;
+        const length = round(panel.Contour[i].ObjLength(), 2) + overhung * 2;
+
+        const material = getMaterialName(elem.Material);
+        result.push({
+            material: elem.Material,        //  Имя материала кромки
+            materialName: material[0],      //  Имя материала
+            materialArticle: material[1],   //  Артикул материала кромки
+            materialSyncExternal: "",       //  Код синхронизации (DB)
+            materialUnit: "",               //  Единица измерения (DB)
+            allowance: elem.Allowance,      //  Припуск на прифуговку
+            clipPanel: elem.ClipPanel,      //  Св-во "подрезать панель"
+            sign: elem.Sign,                //  Обозначение кромки
+            overhung: overhung,             //  Величина свеса кромки
+            thickness: elem.Thickness,      //  Толщина кромки
+            width: elem.Width,              //  Ширина кромки
+            length: length                  //  Длина кромки
+        });
+    };
+
+    return result;
+};
+
+function findPanelCutsList(panel) {
+
 };
 
 //#endregion
@@ -232,7 +268,7 @@ function callbackFunc(item, data) {
 
 //  Функция обработки данных панели
 function panelProcessing(panel, modelData) {
-    const material = getMaterialName(panel);
+    const material = getMaterialName(panel.MaterialName);
 
     //  Игнорируем исключенные материалы
     const excludeMaterial = settings.exclude.panelMaterial;
@@ -269,7 +305,7 @@ function panelProcessing(panel, modelData) {
         PROJECT_NAME + dpn + projectDes : "";
 
     //  Информация о кромках панели
-    const buttInfoArray = [];
+    const buttInfoArray = findPanelButtsList(panel);
 
     //  Информация о пазах панели
     const cutInfoArray = [];
@@ -281,6 +317,7 @@ function panelProcessing(panel, modelData) {
     const plasticInfoArray = [];
 
     modelData.data.panelMaterials.push({
+        name: panel.Name,               //  Имя панели
         material: panel.MaterialName,   //  Материал панели
         materialName: material[0],      //  Имя материала панели
         materialArticle: material[1],   //  Артикул материала панели
@@ -295,7 +332,6 @@ function panelProcessing(panel, modelData) {
         prjDes: projectDes,             //  Обозначение в проекте
         barcode: barcodeData,           //  Код панели в проекте (Pos)
         barcode_des: barcodeDataDes,    //  Код панели в проекте (Designation)
-        name: panel.Name,               //  Имя панели
         width: w,                       //  Длина панели
         height: h,                      //  Ширина панели
         area: panelArea,                //  Площадь панели

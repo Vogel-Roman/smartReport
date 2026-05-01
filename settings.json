@@ -28,6 +28,11 @@
         ],
         "profileMaterial": [],
         "furnitureMaterial": [],
-        "minHoleDiameter": 3
+        "minHoleDiameter": 3,
+        "cutNames": [
+            "R*",
+            "Еврокромка",
+            "Фаска*"
+        ]
     }
 }
