@@ -226,7 +226,80 @@ function findPanelButtsList(panel) {
 };
 
 function findPanelCutsList(panel) {
+    function testNameRegExp(str, patterns) {
+        if (!str || typeof str !== 'string') return false;
+        return patterns.some(pattern => {
+            if (typeof pattern !== 'string') return false;
 
+            // Если нет звездочки - только точное совпадение
+            if (!pattern.includes('*')) return str === pattern;
+
+            // Обработка звездочек
+            // Случай: звездочка в конце (например "R*", "Фаска*")
+            if (pattern.endsWith('*') && !pattern.slice(0, -1).includes('*')) {
+                const prefix = pattern.slice(0, -1);
+                return str.startsWith(prefix);
+            };
+
+            // Случай: звездочка в начале (например "*пласти*")
+            if (pattern.startsWith('*') && !pattern.slice(1).includes('*')) {
+                const suffix = pattern.slice(1);
+                return str === suffix; // ТОЧНОЕ совпадение для "*пласти"
+            };
+
+            // Случай: звездочка в начале и в конце (например "*пласти*")
+            if (pattern.startsWith('*') && pattern.endsWith('*')) {
+                const middle = pattern.slice(1, -1);
+                return str.includes(middle);
+            };
+
+            // Случай: звездочка посередине (например "R*лка")
+            const regexPattern = pattern.replace(/\*/g, '.*');
+            const regex = new RegExp(`^${regexPattern}$`);
+            return regex.test(str);
+        });
+    };
+
+    const result = [];
+
+    for (let i = 0; i < panel.Cuts.Count; i++) {
+        const cutNames = settings.exclude.cutNames;
+        const cut = panel.Cuts[i];
+        if (testNameRegExp(cut.Name, cutNames)) continue;
+        if (!cut.Params) {
+            //  Паз выемка
+            const w = cut.Contour.Width;
+            const h = cut.Contour.Height;
+            let area = round(w * h * 0.000001, 2);
+
+            result.push({
+                materialSyncExternal: "",       //  Код синхронизации (DB)
+                materialUnit: "",               //  Единица измерения (DB)
+                name: cut.Name,                 //  Имя паза
+                sign: cut.Sign,                 //  Обозначение паза
+                cutType: 11,    //  Тип паза
+                area: area,
+                length: 0
+            });
+        } else {
+            //  Исключаем пазы тпов: 8 и 10
+            if (
+                cut.Params.CutType == 8 ||
+                cut.Params.CutType == 10
+            ) continue;
+
+            const length = round(cut.Trajectory.ObjLength(), 2);
+            result.push({
+                materialSyncExternal: "",       //  Код синхронизации (DB)
+                materialUnit: "",               //  Единица измерения (DB)
+                name: cut.Name,                 //  Имя паза
+                sign: cut.Sign,                 //  Обозначение паза
+                cutType: cut.Params.CutType,    //  Тип паза
+                length: length                  //  Длина траектории паза
+            });
+        };
+    };
+    return result;
 };
 
 //#endregion
@@ -308,7 +381,7 @@ function panelProcessing(panel, modelData) {
     const buttInfoArray = findPanelButtsList(panel);
 
     //  Информация о пазах панели
-    const cutInfoArray = [];
+    const cutInfoArray = findPanelCutsList(panel);
 
     //  Информация о присадке панелей
     const drillInfoArray = findPanelHolesList(panel);
