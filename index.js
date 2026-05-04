@@ -11,6 +11,12 @@ const firebird = require('node-firebird');
 const ExcelJS = require('exceljs');
 const { XMLParser } = require('fast-xml-parser');
 
+//  Массивы наименований материалов для поиска в БД
+const BOARD_ARRAY = [];         //  Массив названий листовых материалов
+const BUTT_ARRAY = [];          //  Массив названий кромочных материалов
+const PROFILE_ARRAY = [];       //  Массив названий профильных материалов
+const FURNITURE_ARRAY = [];     //  Массив названий фурнитуры
+
 // Допуск для сравнения с нулем
 const EPS = 1e-10;
 
@@ -206,6 +212,10 @@ function findPanelButtsList(panel) {
         const length = round(panel.Contour[i].ObjLength(), 2) + overhung * 2;
 
         const material = getMaterialName(elem.Material);
+
+        //  Дополняем массив наименований материалов кромки
+        if (!BUTT_ARRAY.includes(material[0])) BUTT_ARRAY.push(material[0]);
+
         result.push({
             material: elem.Material,        //  Имя материала кромки
             materialName: material[0],      //  Имя материала
@@ -225,6 +235,7 @@ function findPanelButtsList(panel) {
     return result;
 };
 
+//  Функция получения информации о пазах панели
 function findPanelCutsList(panel) {
     function testNameRegExp(str, patterns) {
         if (!str || typeof str !== 'string') return false;
@@ -302,6 +313,27 @@ function findPanelCutsList(panel) {
     return result;
 };
 
+//  Функция получения информации о облицовки пласти
+function findPanelPlasticList(panel) {
+    const result = [];
+    const letters = [
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+        'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+    ];
+
+    //  Цикл по массиву облицовок панели
+    for (let i = 0; i < panel.Plastics.Count; i++) {
+        const plastic = panel.Plastics[i];
+        result.push({
+            material: plastic.Material,
+            tkn: plastic.Thickness,
+            ltr: letters[i]
+        });
+    };
+
+    return result;
+};
+
 //#endregion
 
 //#region Функции рекурсивного обхода
@@ -347,6 +379,9 @@ function panelProcessing(panel, modelData) {
     const excludeMaterial = settings.exclude.panelMaterial;
     if (excludeMaterial.includes(material[0])) return;
 
+    //  Дополняем массив наименований листовых материалов
+    if (!BOARD_ARRAY.includes(material[0])) BOARD_ARRAY.push(material[0]);
+
     const dps = settings.delimPrjSign;
     const dpn = settings.delimPrjName;
     const ms = modelData.sign;
@@ -387,7 +422,7 @@ function panelProcessing(panel, modelData) {
     const drillInfoArray = findPanelHolesList(panel);
 
     //  Информация о облицовки пласти
-    const plasticInfoArray = [];
+    const plasticInfoArray = findPanelPlasticList(panel);
 
     modelData.data.panelMaterials.push({
         name: panel.Name,               //  Имя панели
@@ -412,8 +447,52 @@ function panelProcessing(panel, modelData) {
         buttInfo: buttInfoArray,        //  Массив кромок панели
         cutInfo: cutInfoArray,          //  Массив пазов панели
         drillInfo: drillInfoArray,      //  Массив отверстий панели
-        plasticInfo: plasticInfoArray   //  Массив облицовки пласти панели
     });
+
+    //  Обработка массива облицовки панели
+    if (!plasticInfoArray.length) return;
+
+    for (let i = 0; i < plasticInfoArray.length; i++) {
+        const pls = plasticInfoArray[i];
+
+        const mat = getMaterialName(pls.material);
+        //  Игнорируем исключенные листовые материалы
+        if (excludeMaterial.includes(mat[0])) continue;
+
+        //  Дополняем массив наименований листовых материалов
+        if (!BOARD_ARRAY.includes(mat[0])) BOARD_ARRAY.push(mat[0]);
+
+        const plsName = panel.Name + '_' + pls.ltr;
+        const plsPnlDes = panel.Designation ? panel.Designation + pls.ltr : "";
+        const plsPrjDes = projectDes ? projectDes + pls.ltr : "";
+        const bcDataDes = barcodeDataDes ? barcodeDataDes + pls.ltr : "";
+
+        //  Используется допущение, что размер облицовки равен размеру детали!!!
+        modelData.data.panelMaterials.push({
+            name: plsName,                  //  Имя панели
+            material: pls.material,         //  Материал панели
+            materialName: mat[0],           //  Имя материала панели
+            materialArticle: mat[1],        //  Артикул материала панели
+            materialSyncExternal: "",       //  Код синхронизации материала (DB)
+            materialPrice: 0,               //  Цена из базы данных (DB)
+            materialUnit: "",               //  Единица измерения (DB)
+            materialTkn: pls.tkn,           //  Толщина материала
+            prjCount: modelData.count,      //  Количество
+            pos: panel.ArtPos + pls.ltr,    //  Позиция в модели
+            des: plsPnlDes,                 //  Обозначение в модели
+            prjPos: projectPos + pls.ltr,   //  Позиция в проекте
+            prjDes: plsPrjDes,              //  Обозначение в проекте
+            barcode: barcodeData + pls.ltr, //  Код пан. в проекте (Pos)
+            barcode_des: bcDataDes,         //  Код пан. в проекте (Designation)
+            width: w,                       //  Длина панели
+            height: h,                      //  Ширина панели
+            area: panelArea,                //  Площадь панели
+            contourLength: contourLength,   //  Длина контура панели
+            buttInfo: [],                   //  Массив кромок панели
+            cutInfo: [],                    //  Массив пазов панели
+            drillInfo: [],                  //  Массив отверстий панели
+        });
+    };
 };
 
 //  Функция обработки данных профиля

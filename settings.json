@@ -1,6 +1,6 @@
 {
     "coreDIR": "C:\\BazisMebelschik_kitchen",
-    "draweDIR": "C:\\BazisMebelschik_kitchen\\#_Документы\\Чертежи",
+    "drawDIR": "C:\\BazisMebelschik_kitchen\\#_Документы\\Чертежи",
     "db_options": {
         "host": "localhost",
         "database": "C:\\BazisMebelschik_kitchen\\DataBase\\SmartWood_DB.FDB",
