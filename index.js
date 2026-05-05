@@ -41,6 +41,10 @@ if (!checkSettingsData(settings_data))
 //  Данные настроек внешнего файла
 const settings = JSON.parse(settings_data);
 
+//  Классы группировки данных
+const defClass = "M0";
+const classes = [...Object.keys(settings.estimate.classes), defClass];
+
 //  Инициализация констант
 const PROJECT_FILE = system.askFileName('bprj');
 if (!PROJECT_FILE) errFinish("Файл проекта не выбран");
@@ -94,6 +98,14 @@ function getMaterialName(matname) {
         mName = mName.split("\r")[0];
     };
     return [mName, mArt];
+};
+
+// Безопасное имя файла
+function sanitizeFileName(name) {
+    return name
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, ' ')
+        .substring(0, 200);
 };
 
 // Функция поиска отверстий принадлежжащих панели
@@ -225,7 +237,7 @@ function findPanelButtsList(panel, k) {
             materialName: material[0],      //  Имя материала
             materialArticle: material[1],   //  Артикул материала кромки
             materialSyncExternal: "",       //  Код синхронизации (DB)
-            materialID: 0,                  //  ID материала (DB)
+            materialID: undefined,          //  ID материала (DB)
             materialUnit: "",               //  Единица измерения (DB)
             materialPrice: 0,               //  Цена материала (DB)
             allowance: elem.Allowance,      //  Припуск на прифуговку
@@ -433,7 +445,7 @@ function panelProcessing(panel, modelData) {
     modelData.data.panelMaterials.push({
         name: panel.Name,               //  Имя панели
         material: panel.MaterialName,   //  Материал панели
-        materialID: 0,                  //  ID Материала (DB)
+        materialID: undefined,          //  ID Материала (DB)
         materialName: material[0],      //  Имя материала панели
         materialArticle: material[1],   //  Артикул материала панели
         materialSyncExternal: "",       //  Код синхронизации материала (DB)
@@ -480,7 +492,7 @@ function panelProcessing(panel, modelData) {
         modelData.data.panelMaterials.push({
             name: plsName,                  //  Имя панели
             material: pls.material,         //  Материал панели
-            materialID: 0,                  //  ID Материала (DB)
+            materialID: undefined,          //  ID Материала (DB)
             materialName: mat[0],           //  Имя материала панели
             materialArticle: mat[1],        //  Артикул материала панели
             materialSyncExternal: "",       //  Код синхронизации материала (DB)
@@ -594,7 +606,7 @@ function readProjectFilesData(prj_file) {
 
 //#endregion
 
-//#region Функции запросов в БД
+//#region Функции формирования данных
 
 //  Функция выполнения запроса в БД
 async function executeQuery(sql, options, params = []) {
@@ -665,7 +677,6 @@ async function getDBMaterialInfo() {
 
             ID_MAT_ARRAY.push(elem.id_m);
         });
-        //console.log(JSON.stringify(result, null, 2));
         return result;
     } catch (e) {
         console.error("Ошибка:", e.message);
@@ -687,22 +698,28 @@ async function unionMaterialData(prj_arr, mat_arr) {
         let panels = model.data.panelMaterials;
         panels.forEach(pnl => {
             const pnl_m = pnl_mat.get(pnl.materialName);
-            if (!pnl_m) return;
-            pnl.materialSyncExternal = pnl_m.sync_external;
-            pnl.materialID = pnl_m.id_m;
-            pnl.materialUnit = pnl_m.name_meas;
-            pnl.materialPrice = pnl_m.price;
-            pnl.materialWidth = pnl_m.length;
-            pnl.materilaHeight = pnl_m.width;
+            if (pnl_m) {
+                pnl.materialSyncExternal = pnl_m.sync_external;
+                pnl.materialID = pnl_m.id_m;
+                pnl.materialUnit = pnl_m.name_meas;
+                pnl.materialPrice = pnl_m.price;
+                pnl.materialWidth = pnl_m.length;
+                pnl.materilaHeight = pnl_m.width;
+            } else {
+                pnl.materialID = pnl.materialName;
+            };
 
             //  Кромочные материалы
             pnl.buttInfo.forEach(butt => {
                 const butt_m = butt_mat.get(butt.materialName);
-                if (!butt_m) return;
-                butt.materialSyncExternal = butt_m.sync_external;
-                butt.materialID = butt_m.id_m;
-                butt.materialUnit = butt_m.name_meas;
-                butt.materialPrice = butt_m.price;
+                if (butt_m) {
+                    butt.materialSyncExternal = butt_m.sync_external;
+                    butt.materialID = butt_m.id_m;
+                    butt.materialUnit = butt_m.name_meas;
+                    butt.materialPrice = butt_m.price;
+                } else {
+                    butt.materialID = butt.materialName;
+                };
             });
         });
 
@@ -710,26 +727,31 @@ async function unionMaterialData(prj_arr, mat_arr) {
         let profiles = model.data.profileMaterials;
         profiles.forEach(prfl => {
             const prfl_m = prfl_mat.get(prfl.materialName);
-            if (!prfl_m) return;
-            prfl.materialSyncExternal = prfl_m.sync_external;
-            prfl.materialID = prfl_m.id_m;
-            prfl.materialUnit = prfl_m.name_meas;
-            prfl.materialPrice = prfl_m.price;
-            prfl.materialWidth = prfl_m.length;
-            prfl.materilaHeight = prfl_m.width;
+            if (prfl_m) {
+                prfl.materialSyncExternal = prfl_m.sync_external;
+                prfl.materialID = prfl_m.id_m;
+                prfl.materialUnit = prfl_m.name_meas;
+                prfl.materialPrice = prfl_m.price;
+                prfl.materialWidth = prfl_m.length;
+                prfl.materilaHeight = prfl_m.width;
+            } else {
+                prfl.materialID = prfl.materialName;
+            };
         });
 
         //  Фурнитура
         let furnitures = model.data.furnitureMaterials;
         furnitures.forEach(furn => {
             const furn_m = furn_mat.get(furn.materialName);
-            if (!furn_m) return;
-            furn.materialSyncExternal = furn_m.sync_external;
-            furn.materialID = furn_m.id_m;
-            furn.materialUnit = furn_m.name_meas;
-            furn.materialPrice = furn_m.price;
+            if (furn_m) {
+                furn.materialSyncExternal = furn_m.sync_external;
+                furn.materialID = furn_m.id_m;
+                furn.materialUnit = furn_m.name_meas;
+                furn.materialPrice = furn_m.price;
+            } else {
+                furn.materialID = furn.materialName;
+            };
         });
-
     });
 };
 
@@ -778,26 +800,11 @@ async function getDBCLassMaterialInfo(ids) {
     };
 };
 
-//#endregion
+//  Функция компоновки данных для сметы
+function setProjectEstimateData(db_data, prj) {
 
-//#region Формирование данных Сметы
-
-function setProjectEstimateData(db_data, prj_array) {
-
-    /**
-     * Надо проссумировать данные по материалам и фурнитуры по каждому изделию,
-     * а так же затем просуммировать данные по проекту в целом. Но по проекту
-     * в целом думаю стоит делать просто сводную таблицу EXCEL
-     */
-
-
-
-    prj_array.forEach(model => {
-
-        const defClass = "M0";
-        //  Классы группировки данных
-        const classes = [...Object.keys(settings.estimate.classes), defClass];
-
+    //  Цикл по объектам Проекта
+    prj.forEach(model => {
         //  Создаем объект сметы модели с ключами по классам материалов
         const estimate = {};
         for (const key of classes) {
@@ -809,12 +816,16 @@ function setProjectEstimateData(db_data, prj_array) {
             };
         };
 
+        estimate[defClass].name_class = "Материалы без класса";
+        estimate[defClass].name_group = "Материалы без группы класса";
+
         //  Функция сортировки материалов по ключам сметы
         function addClassItems(obj) {
             for (const key in obj) {
                 const item = obj[key];
-                if (!db_data[key]) continue;
-                const class_code = db_data[key].class_code;
+                const class_code = db_data[key] ?
+                    db_data[key].class_code :
+                    defClass;
 
                 //  Если не находим такого класса материалов в списке сметы
                 if (!estimate[class_code]) {
@@ -833,10 +844,7 @@ function setProjectEstimateData(db_data, prj_array) {
             };
         };
 
-        estimate[defClass].name_class = "Материалы без класса";
-        estimate[defClass].name_group = "Материалы без группы класса";
-
-        //  Массивы элементов модули для суммирования данных
+        //  Массивы элементов модели для суммирования данных
         const panels = model.data.panelMaterials;
         const butts = panels.flatMap(pnl => pnl.buttInfo || []);
         const profiles = model.data.profileMaterials;
@@ -844,7 +852,8 @@ function setProjectEstimateData(db_data, prj_array) {
 
         //  Суммируем данные по листовым материалам
         const board_acc = panels.reduce((acc, item) => {
-            const key = item.materialID; //  Ключ материала (ID)
+            //  Ключ материала (ID)
+            const key = item.materialID;
             if (!acc[key]) {
                 acc[key] = {
                     material: item.material,
@@ -866,9 +875,11 @@ function setProjectEstimateData(db_data, prj_array) {
             acc[key].contourLength += item.contourLength * item.prjCount || 0;
             return acc;
         }, {});
+
         //  Суммируем данные по кромочным материалам
         const butt_acc = butts.reduce((acc, item) => {
-            const key = item.materialID; //  Ключ материала (ID)
+            //  Ключ материала (ID)
+            const key = item.materialID;
             if (!acc[key]) {
                 acc[key] = {
                     material: item.material,
@@ -891,7 +902,8 @@ function setProjectEstimateData(db_data, prj_array) {
 
         //  Суммируем данные по погонным материалам
         const prfl_acc = profiles.reduce((acc, item) => {
-            const key = item.materialID; //  Ключ материала (ID)
+            //  Ключ материала (ID)
+            const key = item.materialID;
             if (!acc[key]) {
                 acc[key] = {
                     material: item.material,
@@ -913,21 +925,538 @@ function setProjectEstimateData(db_data, prj_array) {
         addClassItems(board_acc);
         addClassItems(butt_acc);
         addClassItems(prfl_acc);
-        //addClassItems(butt_acc);
+        //addClassItems(furn_acc);
 
         //  Присваиваем данные
         model.estimate_data = estimate;
-        console.log(model.name);
-
-
-        // let prfl_array = [];
-
-        // let furn_array = [];
-
+        //console.log(model.name);
     });
 };
 
 //#endregion
+
+//#region Формирование документов
+
+// Функция для стилизации диапазона ячеек
+function styleCellRange(row, startCol, endCol, styles) {
+    for (let col = startCol; col <= endCol; col++) {
+        const cell = row.getCell(col);
+        Object.assign(cell, styles);
+    };
+};
+
+function getColumnLetter(colNumber) {
+    let letter = '';
+    while (colNumber > 0) {
+        colNumber--;
+        letter = String.fromCharCode(65 + (colNumber % 26)) + letter;
+        colNumber = Math.floor(colNumber / 26);
+    }
+    return letter;
+};
+
+
+//  Функуция создания файла Сметы
+async function createEsimateExcelFile(prj_arr) {
+
+    const row_height = 14;
+    const font_size = 9;
+
+    //  Функция задания параметров страницы
+    function setWorksheetSettings(worksheet) {
+        worksheet.pageSetup = {
+            // Ориентация страницы
+            orientation: 'portrait',  // 'portrait' | 'landscape'
+
+            // Поля страницы (в ДЮЙМАХ! 1 дюйм = 2.54 см)
+            margins: {
+                top: 0.5,      // Верхнее поле
+                bottom: 0.5,   // Нижнее поле
+                left: 0.39,     // Левое поле
+                right: 0.39,    // Правое поле
+                header: 0.3,   // Отступ для колонтитула сверху
+                footer: 0.3    // Отступ для колонтитула снизу
+            },
+
+            // Масштабирование
+            fitToPage: true,    // Вписать в страницу
+            fitToWidth: 1,      // Вписать по ширине (1 страница)
+            fitToHeight: 0,     // По высоте (0 = автоматически)
+
+            // Альтернатива — масштаб в процентах
+            // scale: 85,
+
+            // Центрирование на странице
+            // horizontalCentered: true,
+            // verticalCentered: false,
+
+            // Сетка и заголовки
+            // showGridLines: false,        // Печатать сетку
+            // showRowColHeaders: false,    // Печатать заголовки строк/столбцов
+
+            // Повторять строки/колонки на каждой странице
+            // printTitlesRow: '6:6',      // Повторять 6-ю строку (заголовок)
+            // printTitlesColumn: 'A:B',
+
+            // Область печати
+            // printArea: 'A1:G50',
+
+            // Колонтитулы
+            // headerFooter: {
+            //     oddHeader: '&C&BСпецификация деталей',
+            //     oddFooter: '&LСтраница &P из &N&RДата: &D',
+            //     evenHeader: '&C&BСпецификация деталей',
+            //     evenFooter: '&LСтраница &P из &N&RДата: &D'
+            // },
+
+            // Порядок страниц
+            // pageOrder: 'downThenOver',   // 'overThenDown'
+
+            // Номер первой страницы
+            // firstPageNumber: 1,
+
+            // Качество печати
+            // blackAndWhite: false,
+            // draft: false,
+
+            // Количество копий
+            // copies: 1
+        };
+    };
+
+    //  Стиль заглавной строки таблицы
+    function headerRowTableStyle(row, start, end) {
+        let rowStyle = {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'thin' },
+                bottom: { style: 'medium' },
+                right: { style: 'thin' }
+            },
+            alignment: { vertical: 'middle', horizontal: 'center' },
+            font: {
+                name: 'Arial',
+                size: font_size,
+                bold: true
+            }
+        };
+        let height = row_height;
+        row.height = Math.round(height / 0.75 * 10) / 10;
+
+        styleCellRange(row, start, end, rowStyle);
+
+        //  Первая ячейка
+        styleCellRange(row, start, start, {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'medium' },
+                bottom: { style: 'medium' },
+                right: { style: 'thin' }
+            }
+        });
+
+        //  Последняя ячейка
+        styleCellRange(row, end, end, {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'thin' },
+                bottom: { style: 'medium' },
+                right: { style: 'medium' }
+            }
+        });
+    };
+
+    //Стиль строки таблицы
+    function rowTableStyle(row, start, end) {
+        let rowStyle = {
+            border: {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' }
+            },
+            alignment: { vertical: 'middle' },
+            font: {
+                name: 'Arial',
+                size: font_size - 1,
+                bold: false
+            }
+        };
+        let height = row_height - 0.5;
+        row.height = Math.round(height / 0.75 * 10) / 10;
+
+        styleCellRange(row, start, end, rowStyle);
+
+        //  Первая ячейка
+        styleCellRange(row, 2, 2, {
+            border: {
+                top: { style: 'thin' },
+                left: { style: 'medium' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' }
+            }
+        });
+
+        //  Последняя ячейка
+        styleCellRange(row, end, end, {
+            border: {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'medium' }
+            }
+        });
+    };
+
+    //  Стиль последней строки таблицы
+    function endRowTableStyle(row, start, end) {
+        let rowStyle = {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'none' },
+                bottom: { style: 'medium' },
+                right: { style: 'none' }
+            },
+            font: {
+                name: 'Arial',
+                size: font_size - 1,
+                bold: true
+            }
+        };
+        let height = row_height;
+        row.height = Math.round(height / 0.75 * 10) / 10;
+
+        styleCellRange(row, start, end, rowStyle);
+
+        //  Первая ячейка
+        styleCellRange(row, 2, 2, {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'medium' },
+                bottom: { style: 'medium' },
+                right: { style: 'none' }
+            }
+        });
+
+        //  Последняя ячейка
+        styleCellRange(row, end, end, {
+            border: {
+                top: { style: 'medium' },
+                left: { style: 'none' },
+                bottom: { style: 'medium' },
+                right: { style: 'medium' }
+            }
+        });
+    };
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = settings.author;
+    workbook.created = new Date();
+
+    const c_koef = settings.estimate.classes;
+
+    // Цикл создания вкладок
+    prj_arr.forEach(model => {
+        const estimate = model.estimate_data;   //  Объект данных Сметы
+        const name = model.name;                //  Имя изделия
+        const sign = model.sign;                //  Обозначение в Проекте
+
+        const sheet_name = `${sign}_${name}`.substring(0, 31);
+        const worksheet = workbook.addWorksheet(sheet_name);
+
+        setWorksheetSettings(worksheet);
+
+        // Колонки
+        worksheet.columns = [
+            { width: 0.67 },    //  A Отступ
+            { width: 5.42 },    //  B Номер 
+            { width: 18 },      //  Артикул
+            { width: 60 },      //  C Наименование 78
+            { width: 8 },       //  D Количество
+            { width: 8 },       //  E Ед. изм.
+            { width: 12 },      //  F Цена
+            { width: 12 }       //  G Сумма
+        ];
+
+        //  Количество колонок документа
+        const col_count = worksheet.columns.length;
+
+        // Таблица (header row)
+        const headerRowInd = 6;     //  Индекс верхней строки таблицы
+        const scol = 2;         //  Начальная колонка
+        const headerRow = worksheet.getRow(headerRowInd);
+
+
+        // Устанавливаем значения заголовков вручную (начиная с B)
+        const headers = [
+            '№', 'Артикул', 'Наименование',
+            'Кол-во', 'Ед.', 'Цена', 'Сумма'
+        ];
+        for (let col = scol; col <= headers.length + scol - 1; col++) {
+            const cell = headerRow.getCell(col);
+            cell.value = headers[col - scol];  // Заголовок
+        };
+        headerRowTableStyle(headerRow, scol, col_count);
+
+        const v_headers = ['k', 'Цена', 'Сумма', 'Доход'];
+        for (let col = 0; col < v_headers.length; col++) {
+            const cell = headerRow.getCell(scol + 8 + col);
+            cell.value = v_headers[col];  // Заголовок
+            console.log(v_headers[col]);
+
+        };
+        headerRowTableStyle(headerRow, scol + 8, col_count + scol + v_headers.length - 1);
+
+        let ind = headerRowInd + 1;
+
+        //  Колонка для коэффициента
+        const coeffColLetter = getColumnLetter(scol + 8);
+        const dbPriceLetter = getColumnLetter(scol + 9);
+        const dbSumLetter = getColumnLetter(scol + 10);
+        const vdLetter = getColumnLetter(scol + 11);
+
+        let row_counter = 1;
+        classes.forEach(key => {
+
+            const startRowInd = ind;
+            const items = estimate[key].items;
+            const k = c_koef[key] ? c_koef[key] : 0;
+
+            if (!items.length) return;
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+
+                //  Текущая строка
+                const rn = ind + i;
+                const row = worksheet.getRow(rn);
+                rowTableStyle(row, scol, col_count);
+
+                //  Выбор измеряемой величины
+                let val = "area";
+                if (item.length) val = "length";
+                if (item.count) val = "count";
+
+                //  Колонка цены т количества
+                const cpl = getColumnLetter(scol + 3);
+                const cvl = getColumnLetter(scol + 5);
+
+                worksheet.getCell(`${coeffColLetter}${startRowInd}`).value = k;
+
+                //  Заполняем ячейки строки
+                row.getCell(scol + 0).value = row_counter++;
+                row.getCell(scol + 1).value = item.materialArticle;
+                row.getCell(scol + 2).value = item.materialName;
+                row.getCell(scol + 3).value = item[val];
+                row.getCell(scol + 4).value = item.materialUnit;
+                // row.getCell(scol + 5).value = item.materialPrice;
+
+                //------------------------------------------------------------//
+                //  Цена материала из базы
+                const dbPriceCell = worksheet.getCell(`${dbPriceLetter}${rn}`);
+                dbPriceCell.value = item.materialPrice;
+                dbPriceCell.font = {
+                    name: 'Arial',
+                    size: font_size - 1,
+                    bold: false
+                };
+                dbPriceCell.numFmt = '#,##0.00';
+                dbPriceCell.alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+                dbPriceCell.border = {
+                    top: { style: 'thin' },
+                    left: { style: 'medium' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' }
+                };
+
+                const dbSumCell = worksheet.getCell(`${dbSumLetter}${rn}`)
+
+                //  Сумма материала из базы
+                dbSumCell.value = {
+                    formula: `${dbPriceLetter}${rn}*${cpl}${rn}`
+                };
+                dbSumCell.font = {
+                    name: 'Arial',
+                    size: font_size - 1,
+                    bold: false
+                };
+                dbSumCell.numFmt = '#,##0.00';
+                dbSumCell.alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+                dbSumCell.border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' }
+                };
+
+                //  Разница между суммой с наценкой и без
+                const valCell = worksheet.getCell(`${vdLetter}${rn}`)
+                valCell.value = {
+                    formula: `${cpl}${rn}*${cvl}${rn}-${dbSumLetter}${rn}`
+                };
+                valCell.font = {
+                    name: 'Arial',
+                    size: font_size - 1,
+                    bold: false
+                };
+                valCell.numFmt = '#,##0.00';
+                valCell.alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+                valCell.border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'medium' }
+                };
+
+                //------------------------------------------------------------//
+
+                //  Цена
+                row.getCell(scol + 5).value = {
+                    formula: `${dbPriceLetter}${rn}*${coeffColLetter}${startRowInd}`
+                };
+
+                //  Сумма
+                row.getCell(scol + 6).value = {
+                    formula: `${cvl}${rn}*${cpl}${rn}`
+                };
+
+                //  Форматирование ячеек
+
+                //  Ячейка номера строки
+                row.getCell(scol + 0).alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка названия материалы
+                row.getCell(scol + 1).alignment = {
+                    indent: 1,
+                    horizontal: 'left',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка названия материалы
+                row.getCell(scol + 2).alignment = {
+                    indent: 1,
+                    horizontal: 'left',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка количества
+                row.getCell(scol + 3).alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка ед. изм.
+                row.getCell(scol + 4).alignment = {
+                    horizontal: 'center',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка цены
+                row.getCell(scol + 5).alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+
+                //  Ячейка суммы
+                row.getCell(scol + 6).alignment = {
+                    indent: 1,
+                    horizontal: 'right',
+                    vertical: 'middle'
+                };
+
+                //  Форматирование числа
+                if (val == "count") {
+                    row.getCell(scol + 3).numFmt = '# ##0';
+                } else {
+                    row.getCell(scol + 3).numFmt = '#,##0.00';
+                };
+                row.getCell(scol + 5).numFmt = '#,##0.00';
+                row.getCell(scol + 6).numFmt = '#,##0.00';
+            };
+
+            ind += items.length;
+            const endRowInd = ind - 1;
+
+            //  Объединяем все ячейки в этой колонке для диапазона строк
+            const cellAdress = `${coeffColLetter}${startRowInd}`;
+            worksheet.mergeCells(
+                `${coeffColLetter}${startRowInd}:${coeffColLetter}${endRowInd}`
+            );
+            const mergedCell = worksheet.getCell(cellAdress);
+            mergedCell.alignment = {
+                vertical: 'middle',
+                horizontal: 'center'
+            };
+            mergedCell.numFmt = '#,##0.00';
+            mergedCell.font = {
+                name: 'Arial',
+                size: font_size - 1,
+                bold: false
+            };
+        });
+
+        const row = worksheet.getRow(ind);
+        endRowTableStyle(row, scol, col_count);
+        const csm = getColumnLetter(scol + 6);
+
+        //  Ячейка Итого
+        row.getCell(scol + 5).value = "Итого:";
+        row.getCell(scol + 5).alignment = {
+            horizontal: 'right',
+            vertical: 'middle'
+        };
+        row.getCell(scol + 5).border = {
+            top: { style: 'medium' },
+            left: { style: 'none' },
+            bottom: { style: 'medium' },
+            right: { style: 'thin' }
+        };
+
+        //  Ячейка суммы
+        row.getCell(scol + 6).value = {
+            formula: `SUM(${csm}${headerRowInd + 1}:${csm}${ind - 1})`
+        };
+        row.getCell(scol + 6).numFmt = '# ##0';
+        row.getCell(scol + 6).alignment = {
+            indent: 1,
+            horizontal: 'right',
+            vertical: 'middle'
+        };
+
+        //  Устанавливаем диапазон печати
+        // Получаем номер последней строки, где есть данные
+        // Устанавливаем область печати: колонки A-scm, все строки с данными
+        worksheet.pageSetup.printArea = `A1:${csm}${worksheet.rowCount}`;
+
+    });
+
+    // Сохранение документа
+    const fileName = `${sanitizeFileName(
+        PROJECT_NAME + "_Калькуляция проекта"
+    )}.xlsx`;
+    const filePath = path.join(FOLDER, fileName);
+    await workbook.xlsx.writeFile(filePath);
+};
+
+//#endregion
+
 /****************************** ОСНОВНАЯ ФУНКЦИЯ ******************************/
 async function main() {
 
@@ -962,25 +1491,28 @@ async function main() {
             // Обработка следующего файла
             Action.AsyncExec(processNextFile);
         } else {
-            //  Получаем данные из базу материалов
+            //  1. Получаем данные из Базы материалов
             let dbNames = await getDBMaterialInfo();
 
-            //  Дополняем данные с модели данными из БД
+            //  2. Дополняем данные с модели данными из Базы материалов
             await unionMaterialData(prj_array, dbNames);
 
-            //  Получаем данные по классам материалов проекта
+            //  3. Получаем данные по классам из Базы материалов
             let mat_classes = {};
             if (ID_MAT_ARRAY.length) {
-                //console.log(JSON.stringify(ID_MAT_ARRAY));
                 mat_classes = await getDBCLassMaterialInfo(ID_MAT_ARRAY);
             };
 
-            //console.log(JSON.stringify(mat_classes, null, 2));
-
+            //  4. Формируем обобщенные данные по моделям проекта
             setProjectEstimateData(mat_classes, prj_array);
 
-            console.log(`Обработано ${count} файлов из ${prj_array.length}`);
+            //  5. Формируем файлы спецификаций деталей
+
+            //  6. Формируем файл Сметы проекта
+            await createEsimateExcelFile(prj_array);
+            //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
+            console.log(`Обработано ${count} файлов из ${prj_array.length}`);
             Action.Finish();
         };
     };

@@ -129,7 +129,6 @@ async function createForm() {
                 right: { style: 'medium' }
             }
         });
-
     };
 
     let arr_data = ["M1", "M2", "M3"];
