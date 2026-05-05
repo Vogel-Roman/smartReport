@@ -12,7 +12,16 @@
         "pageSize": 4096
     },
     "author": "Роман Багаев",
-    "estimate": true,
+    "estimate": {
+        "classes": {
+            "M1": 2.0,
+            "M2": 2.0,
+            "M3": 2.0,
+            "M4": 2.0,
+            "FSD1": 2.0,
+            "FSD2": 2.0
+        }
+    },
     "enterprise": {
         "name": "Смарт-Вуд",
         "address": "6900105, г.Владивосток",

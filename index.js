@@ -17,6 +17,8 @@ const BUTT_ARRAY = [];          //  Массив названий кромочн
 const PROFILE_ARRAY = [];       //  Массив названий профильных материалов
 const FURNITURE_ARRAY = [];     //  Массив названий фурнитуры
 
+const ID_MAT_ARRAY = [];        //  Массив ID материалов
+
 // Допуск для сравнения с нулем
 const EPS = 1e-10;
 
@@ -199,7 +201,8 @@ function findPanelHolesList(panel) {
 };
 
 //  Функция получения информации о кромках панели
-function findPanelButtsList(panel) {
+function findPanelButtsList(panel, k) {
+    //  count - это количество изделий в проекте
     const result = [];
 
     for (let i = 0; i < panel.Contour.Count; i++) {
@@ -209,7 +212,8 @@ function findPanelButtsList(panel) {
         if (!elem.Thickness) continue;
 
         const overhung = elem.Overhung;
-        const length = round(panel.Contour[i].ObjLength(), 2) + overhung * 2;
+        const contour = panel.Contour[i];
+        const length = 0.001 * k * (contour.ObjLength() + overhung * 2);
 
         const material = getMaterialName(elem.Material);
 
@@ -221,6 +225,7 @@ function findPanelButtsList(panel) {
             materialName: material[0],      //  Имя материала
             materialArticle: material[1],   //  Артикул материала кромки
             materialSyncExternal: "",       //  Код синхронизации (DB)
+            materialID: 0,                  //  ID материала (DB)
             materialUnit: "",               //  Единица измерения (DB)
             materialPrice: 0,               //  Цена материала (DB)
             allowance: elem.Allowance,      //  Припуск на прифуговку
@@ -414,7 +419,7 @@ function panelProcessing(panel, modelData) {
         PROJECT_NAME + dpn + projectDes : "";
 
     //  Информация о кромках панели
-    const buttInfoArray = findPanelButtsList(panel);
+    const buttInfoArray = findPanelButtsList(panel, modelData.count);
 
     //  Информация о пазах панели
     const cutInfoArray = findPanelCutsList(panel);
@@ -428,6 +433,7 @@ function panelProcessing(panel, modelData) {
     modelData.data.panelMaterials.push({
         name: panel.Name,               //  Имя панели
         material: panel.MaterialName,   //  Материал панели
+        materialID: 0,                  //  ID Материала (DB)
         materialName: material[0],      //  Имя материала панели
         materialArticle: material[1],   //  Артикул материала панели
         materialSyncExternal: "",       //  Код синхронизации материала (DB)
@@ -474,6 +480,7 @@ function panelProcessing(panel, modelData) {
         modelData.data.panelMaterials.push({
             name: plsName,                  //  Имя панели
             material: pls.material,         //  Материал панели
+            materialID: 0,                  //  ID Материала (DB)
             materialName: mat[0],           //  Имя материала панели
             materialArticle: mat[1],        //  Артикул материала панели
             materialSyncExternal: "",       //  Код синхронизации материала (DB)
@@ -574,7 +581,7 @@ function readProjectFilesData(prj_file) {
                     profileMaterials: [],
                     furnitureMaterials: []
                 },
-                esimate: {}
+                estimate_data: {}
             });
         });
 
@@ -587,7 +594,27 @@ function readProjectFilesData(prj_file) {
 
 //#endregion
 
-//#region Функция дополнения данных
+//#region Функции запросов в БД
+
+//  Функция выполнения запроса в БД
+async function executeQuery(sql, options, params = []) {
+    return new Promise((resolve, reject) => {
+        firebird.attach(options, (err, db) => {
+            if (err) {
+                reject(err);
+                return;
+            };
+            db.query(sql, params, (err, result) => {
+                db.detach();
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(result);
+                };
+            });
+        });
+    });
+};
 
 //  Функция получения данных о материалах из Базы материалов
 async function getDBMaterialInfo() {
@@ -598,26 +625,6 @@ async function getDBMaterialInfo() {
         ...PROFILE_ARRAY, ...FURNITURE_ARRAY
     ];
 
-    //  Функция выполнения запроса в БД
-    async function executeQuery(sql, options, params = []) {
-        return new Promise((resolve, reject) => {
-            firebird.attach(options, (err, db) => {
-                if (err) {
-                    reject(err);
-                    return;
-                };
-                db.query(sql, params, (err, result) => {
-                    db.detach();
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(result);
-                    };
-                });
-            });
-        });
-    };
-
     try {
         const options = settings.db_options || null;
 
@@ -625,17 +632,19 @@ async function getDBMaterialInfo() {
         //  Строка запроса
         const sqlString = `
         SELECT
-        m.NAME_MAT,
-        m.PRICE,
-        m.SYNC_EXTERNAL,
-        ma.LENGTH,
-        ma.WIDTH,
-        ma.THICKNESS,
-        me.NAME_MEAS
+            m.ID_M,
+            m.NAME_MAT,
+            m.PRICE,
+            m.SYNC_EXTERNAL,
+            ma.LENGTH,
+            ma.WIDTH,
+            ma.THICKNESS,
+            me.NAME_MEAS
         FROM MATERIAL AS m
-        INNER JOIN MATERIAL_ADVANCE AS ma ON m.ID_M = ma.ID_M
-        LEFT JOIN MEASURE AS me ON m.ID_MS = me.ID_MS
-        WHERE m.NAME_MAT IN (${matnames.map(() => '?').join(',')})
+            INNER JOIN MATERIAL_ADVANCE AS ma ON m.ID_M = ma.ID_M
+            LEFT JOIN MEASURE AS me ON m.ID_MS = me.ID_MS
+        WHERE
+            m.NAME_MAT IN (${matnames.map(() => '?').join(',')})
         `;
         //  Запрос в БД
         const result_db = await executeQuery(sqlString, options, matnames);
@@ -653,6 +662,8 @@ async function getDBMaterialInfo() {
             if (BUTT_ARRAY.includes(elem.name_mat)) result[1].push(elem);
             if (PROFILE_ARRAY.includes(elem.name_mat)) result[2].push(elem);
             if (FURNITURE_ARRAY.includes(elem.name_mat)) result[3].push(elem);
+
+            ID_MAT_ARRAY.push(elem.id_m);
         });
         //console.log(JSON.stringify(result, null, 2));
         return result;
@@ -678,14 +689,18 @@ async function unionMaterialData(prj_arr, mat_arr) {
             const pnl_m = pnl_mat.get(pnl.materialName);
             if (!pnl_m) return;
             pnl.materialSyncExternal = pnl_m.sync_external;
+            pnl.materialID = pnl_m.id_m;
             pnl.materialUnit = pnl_m.name_meas;
             pnl.materialPrice = pnl_m.price;
             pnl.materialWidth = pnl_m.length;
             pnl.materilaHeight = pnl_m.width;
+
+            //  Кромочные материалы
             pnl.buttInfo.forEach(butt => {
                 const butt_m = butt_mat.get(butt.materialName);
                 if (!butt_m) return;
                 butt.materialSyncExternal = butt_m.sync_external;
+                butt.materialID = butt_m.id_m;
                 butt.materialUnit = butt_m.name_meas;
                 butt.materialPrice = butt_m.price;
             });
@@ -697,6 +712,7 @@ async function unionMaterialData(prj_arr, mat_arr) {
             const prfl_m = prfl_mat.get(prfl.materialName);
             if (!prfl_m) return;
             prfl.materialSyncExternal = prfl_m.sync_external;
+            prfl.materialID = prfl_m.id_m;
             prfl.materialUnit = prfl_m.name_meas;
             prfl.materialPrice = prfl_m.price;
             prfl.materialWidth = prfl_m.length;
@@ -709,6 +725,7 @@ async function unionMaterialData(prj_arr, mat_arr) {
             const furn_m = furn_mat.get(furn.materialName);
             if (!furn_m) return;
             furn.materialSyncExternal = furn_m.sync_external;
+            furn.materialID = furn_m.id_m;
             furn.materialUnit = furn_m.name_meas;
             furn.materialPrice = furn_m.price;
         });
@@ -716,8 +733,201 @@ async function unionMaterialData(prj_arr, mat_arr) {
     });
 };
 
+//  Функция получения данных о классах материалов
+async function getDBCLassMaterialInfo(ids) {
+
+    try {
+        const options = settings.db_options || null;
+        const classes = Object.keys(settings.estimate.classes);
+
+        if (!classes) errFinish("Не заполнены классы материалов");
+
+        //  Строка запроса
+        const sqlString = `
+            SELECT 
+                LMC.ID_M,
+                GCM.LABEL_CLASS || CM.CUR_NUM_REC AS CLASS_CODE,
+                CM.NAME_CLASS,
+                GCM.NAME_GROUP
+            FROM 
+                LINK_MATERIAL_CLASS LMC
+                INNER JOIN CLASS_MATERIAL CM ON CM.ID_CM = LMC.ID_CM
+                INNER JOIN GROUP_CLASS_MAT GCM ON GCM.ID_GRCM = CM.ID_GRCM
+            WHERE 
+                LMC.ID_M IN (${ids.map(() => '?').join(',')})
+            ORDER BY 
+                LMC.ID_M, GCM.LABEL_CLASS, CM.CUR_NUM_REC
+        `;
+        //  Запрос в БД
+        const result_db = await executeQuery(sqlString, options, ids);
+        const result = {};
+
+        //  Обработка результата
+        result_db.forEach(elem => {
+            //  Игнорируем записи классов не входящих в список
+            if (classes.indexOf(elem.class_code) < 0) return;
+
+            //  Фильтруем только уникальные записи ID материалов
+            if (!result[elem.id_m]) result[elem.id_m] = elem;
+        });
+        //console.log(JSON.stringify(result, null, 2));
+        return result;
+    } catch (e) {
+        console.error("Ошибка:", e.message);
+        Action.Finish();
+    };
+};
+
 //#endregion
 
+//#region Формирование данных Сметы
+
+function setProjectEstimateData(db_data, prj_array) {
+
+    /**
+     * Надо проссумировать данные по материалам и фурнитуры по каждому изделию,
+     * а так же затем просуммировать данные по проекту в целом. Но по проекту
+     * в целом думаю стоит делать просто сводную таблицу EXCEL
+     */
+
+
+
+    prj_array.forEach(model => {
+
+        const defClass = "M0";
+        //  Классы группировки данных
+        const classes = [...Object.keys(settings.estimate.classes), defClass];
+
+        //  Создаем объект сметы модели с ключами по классам материалов
+        const estimate = {};
+        for (const key of classes) {
+            estimate[key] = {
+                class_code: key,
+                name_class: "",
+                name_group: "",
+                items: []
+            };
+        };
+
+        //  Функция сортировки материалов по ключам сметы
+        function addClassItems(obj) {
+            for (const key in obj) {
+                const item = obj[key];
+                if (!db_data[key]) continue;
+                const class_code = db_data[key].class_code;
+
+                //  Если не находим такого класса материалов в списке сметы
+                if (!estimate[class_code]) {
+                    estimate[defClass].items.push(item);
+                    continue;
+                };
+
+                //  Если данные класса еще не заполнены
+                if (!estimate[class_code].name_class) {
+                    estimate[class_code].name_class = db_data[key].name_class;
+                    estimate[class_code].name_group = db_data[key].name_group;
+                };
+
+                //  Добавляем элемент в массив
+                estimate[class_code].items.push(item);
+            };
+        };
+
+        estimate[defClass].name_class = "Материалы без класса";
+        estimate[defClass].name_group = "Материалы без группы класса";
+
+        //  Массивы элементов модули для суммирования данных
+        const panels = model.data.panelMaterials;
+        const butts = panels.flatMap(pnl => pnl.buttInfo || []);
+        const profiles = model.data.profileMaterials;
+        const furnitures = model.data.furnitureMaterials;
+
+        //  Суммируем данные по листовым материалам
+        const board_acc = panels.reduce((acc, item) => {
+            const key = item.materialID; //  Ключ материала (ID)
+            if (!acc[key]) {
+                acc[key] = {
+                    material: item.material,
+                    materialID: key,
+                    materialName: item.materialName,
+                    materialArticle: item.materialArticle,
+                    materialSyncExternal: item.materialSyncExternal,
+                    materialPrice: item.materialPrice,
+                    materialUnit: item.materialUnit,
+                    materialWidth: item.materialWidth,
+                    materilaHeight: item.materilaHeight,
+                    materialTkn: item.materialTkn,
+                    area: 0,
+                    contourLength: 0
+                };
+            };
+            //  Площадь деталей и длина контуров деталей
+            acc[key].area += item.area * item.prjCount || 0;
+            acc[key].contourLength += item.contourLength * item.prjCount || 0;
+            return acc;
+        }, {});
+        //  Суммируем данные по кромочным материалам
+        const butt_acc = butts.reduce((acc, item) => {
+            const key = item.materialID; //  Ключ материала (ID)
+            if (!acc[key]) {
+                acc[key] = {
+                    material: item.material,
+                    materialID: key,
+                    materialName: item.materialName,
+                    materialArticle: item.materialArticle,
+                    materialSyncExternal: item.materialSyncExternal,
+                    materialPrice: item.materialPrice,
+                    materialUnit: item.materialUnit,
+                    materialSign: item.sign,
+                    materialWidth: item.width,
+                    materialTkn: item.thickness,
+                    length: 0
+                };
+            };
+            //  Длина кромки
+            acc[key].length += item.length || 0;
+            return acc;
+        }, {});
+
+        //  Суммируем данные по погонным материалам
+        const prfl_acc = profiles.reduce((acc, item) => {
+            const key = item.materialID; //  Ключ материала (ID)
+            if (!acc[key]) {
+                acc[key] = {
+                    material: item.material,
+                    materialID: key,
+                    materialName: item.materialName,
+                    materialArticle: item.materialArticle,
+                    materialSyncExternal: item.materialSyncExternal,
+                    materialPrice: item.materialPrice,
+                    materialUnit: item.materialUnit,
+                    materialSign: item.sign,
+                    length: 0
+                };
+            };
+            //  Длина кромки
+            acc[key].length += item.length || 0;
+            return acc;
+        }, {});
+
+        addClassItems(board_acc);
+        addClassItems(butt_acc);
+        addClassItems(prfl_acc);
+        //addClassItems(butt_acc);
+
+        //  Присваиваем данные
+        model.estimate_data = estimate;
+        console.log(model.name);
+
+
+        // let prfl_array = [];
+
+        // let furn_array = [];
+
+    });
+};
+
+//#endregion
 /****************************** ОСНОВНАЯ ФУНКЦИЯ ******************************/
 async function main() {
 
@@ -757,6 +967,17 @@ async function main() {
 
             //  Дополняем данные с модели данными из БД
             await unionMaterialData(prj_array, dbNames);
+
+            //  Получаем данные по классам материалов проекта
+            let mat_classes = {};
+            if (ID_MAT_ARRAY.length) {
+                //console.log(JSON.stringify(ID_MAT_ARRAY));
+                mat_classes = await getDBCLassMaterialInfo(ID_MAT_ARRAY);
+            };
+
+            //console.log(JSON.stringify(mat_classes, null, 2));
+
+            setProjectEstimateData(mat_classes, prj_array);
 
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);
             //console.log(JSON.stringify(prj_array, null, 2));
