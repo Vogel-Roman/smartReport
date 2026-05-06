@@ -352,6 +352,45 @@ function findPanelPlasticList(panel) {
     return result;
 };
 
+//  Функция считывания с объекта дополнительных материалов.
+function findAdditionalMaterials(obj, modelData) {
+    //  Проверка существования дополнительных материалов.
+    let attNode = obj.ParamSectionNode('MaterialAttendance', true);
+    let objNode = attNode.FindNode('List');
+
+    //  На случай, если такого узла нет, для старых версий файлов
+    if (!objNode) return [];
+
+    const result = [];
+    for (let i = 0; i < objNode.Count; i++) {
+        const elem = objNode.Nodes[i];
+        let materialNode = elem.FindNode('Name');
+        let countNode = elem.FindNode('Count');
+
+        if (materialNode) {
+            const material = getMaterialName(materialNode.Value);
+
+            //  Дополняем массив наименований листовых материалов
+            if (!FURNITURE_ARRAY.includes(material[0])) {
+                FURNITURE_ARRAY.push(material[0]);
+            };
+
+            modelData.data.furnitureMaterials.push({
+                material: materialNode.Value,   //  Название фурнитуры
+                materialID: undefined,          //  ID Материала (DB)
+                materialName: material[0],      //  Имя фурнитуры
+                materialArticle: material[1],   //  Артикул фурнитуры
+                materialSyncExternal: "",       //  Код синхронизации (DB)
+                materialPrice: 0,               //  Цена из базы данных (DB)
+                materialUnit: "",               //  Единица измерения (DB)
+                prjCount: modelData.count,      //  Количество
+                count: modelData.count          //  Количество
+            });
+        };
+    };
+    return result;
+};
+
 //#endregion
 
 //#region Функции рекурсивного обхода
@@ -381,6 +420,9 @@ function callbackFunc(item, data) {
     } else if (item instanceof TFurnAsm || item instanceof TFastener) {
         //  Фурнитура или сборка (покупное изделие)
         furnitureProcessing(item, data);
+    } else if (item instanceof TFurnBlock || item instanceof TDraftBlock) {
+        //  Поиск дополнительных материалов к блоку или полуфабрикату
+        findAdditionalMaterials(item, data);
     };
 
 };
@@ -392,6 +434,9 @@ function callbackFunc(item, data) {
 //  Функция обработки данных панели
 function panelProcessing(panel, modelData) {
     const material = getMaterialName(panel.MaterialName);
+
+    //  Поиск дополнительных материалов к панели
+    findAdditionalMaterials(panel, modelData);
 
     //  Игнорируем исключенные материалы
     const excludeMaterial = settings.exclude.panelMaterial;
@@ -521,6 +566,10 @@ function panelProcessing(panel, modelData) {
 
 //  Функция обработки данных профиля
 function profileProcessing(profile, modelData) {
+
+    //  Поиск дополнительных материалов к профилю
+    findAdditionalMaterials(profile, modelData);
+
     //  Игнорируем исключенные материалы
     const excludeMaterial = settings.exclude.profileMaterial;
     if (excludeMaterial.includes(profile.MaterialName)) return;
@@ -530,13 +579,89 @@ function profileProcessing(profile, modelData) {
 };
 
 //  Функция обработки данных фурнитуры
-function furnitureProcessing(fastener, modelData) {
+function furnitureProcessing(fstn, modelData) {
+
     //  Игнорируем исключенные материалы
     const excludeMaterial = settings.exclude.furnitureMaterial;
-    if (excludeMaterial.includes(fastener.MaterialName)) return;
 
-    //  !!!! Тут нужна проверка на составную фурнитуру !!!!!!
-    //const material = getMaterialName(fastener.MaterialName);
+    //  Поиск составной фурнитуры
+    function getFastenerElements(furn) {
+        let data = furn.AdvParamData;
+        if (data && (data = data.FindNode('Elements'))) {
+            let result = [];
+            for (let i = 0; i < data.Count; i++) result.push(data[i].Value);
+            return result;
+        };
+        return [];
+    };
+
+    //  Поиск дополнительных материалов к фурнитуре
+    findAdditionalMaterials(fstn, modelData);
+
+    /**
+     * Надо исключить попадание в массив фурнитуры, глухих и сквозных 
+     * параметрических отверстий. Для этого нужно протестировать имя на
+     * соответствие регулярным выраждениям. /^\d+x\d+/ и /^\d/;
+     */
+    const regexp1 = /^\d+(,\d+)?x\d+(,\d+)?$/;  //  Имя глухих отверстий
+    const regexp2 = /^\d+(,\d+)?$/;             //  Имя сквозных отверстий
+
+    let arr = getFastenerElements(fstn);
+    if (arr.length) {
+        //  Составная фурнитура
+        //console.log('Составная фурниутра');
+        for (let i = 0; i < arr.length; i++) {
+            if (arr[i].match(regexp1) || arr[i].match(regexp2)) continue;
+            const material = getMaterialName(arr[i]);
+
+            //  Игнорируем исключеннeю фурнитуру
+            if (excludeMaterial.includes(material[0])) continue;
+
+            //  Дополняем массив наименований листовых материалов
+            if (!FURNITURE_ARRAY.includes(material[0])) {
+                FURNITURE_ARRAY.push(material[0]);
+            };
+
+            //  Добавляем данные в массив объектов фурнитуры
+            modelData.data.furnitureMaterials.push({
+                material: arr[i],               //  Название фурнитуры
+                materialID: undefined,          //  ID Материала (DB)
+                materialName: material[0],      //  Имя фурнитуры
+                materialArticle: material[1],   //  Артикул фурнитуры
+                materialSyncExternal: "",       //  Код синхронизации (DB)
+                materialPrice: 0,               //  Цена из базы данных (DB)
+                materialUnit: "",               //  Единица измерения (DB)
+                prjCount: modelData.count,      //  Количество
+                count: modelData.count          //  Количество
+            });
+        };
+    } else {
+        //  Обрабатываем как обычную фурнитуру
+        if (fstn.Name.match(regexp1) || fstn.Name.match(regexp2)) return;
+        const material = getMaterialName(fstn.Name);
+
+        //  Игнорируем исключеннeю фурнитуру
+        if (excludeMaterial.includes(material[0])) return;
+
+        //  Дополняем массив наименований листовых материалов
+        if (!FURNITURE_ARRAY.includes(material[0])) {
+            FURNITURE_ARRAY.push(material[0]);
+        };
+
+        //  Добавляем данные в массив объектов фурнитуры
+        modelData.data.furnitureMaterials.push({
+            material: fstn.Name,            //  Название фурнитуры
+            materialID: undefined,          //  ID Материала (DB)
+            materialName: material[0],      //  Имя фурнитуры
+            materialArticle: material[1],   //  Артикул фурнитуры
+            materialSyncExternal: "",       //  Код синхронизации (DB)
+            materialPrice: 0,               //  Цена из базы данных (DB)
+            materialUnit: "",               //  Единица измерения (DB)
+            prjCount: modelData.count,      //  Количество
+            count: modelData.count          //  Количество
+        });
+    };
+
 };
 
 //#endregion
@@ -613,6 +738,7 @@ async function executeQuery(sql, options, params = []) {
     return new Promise((resolve, reject) => {
         firebird.attach(options, (err, db) => {
             if (err) {
+                console.log(err.message);
                 reject(err);
                 return;
             };
@@ -631,11 +757,47 @@ async function executeQuery(sql, options, params = []) {
 //  Функция получения данных о материалах из Базы материалов
 async function getDBMaterialInfo() {
 
-    //  Формируем общий массив наименований для запроса в БД
+    // //  Формируем общий массив наименований для запроса в БД
+    // const matnames = [
+    //     ...BOARD_ARRAY, ...BUTT_ARRAY,
+    //     ...PROFILE_ARRAY, ...FURNITURE_ARRAY
+    // ]; // "ЛДСП «Альпина белая» W1100 ST9 16 мм, EGGER", "Конфирмат 7х50 мм, Zn"
+
+
     const matnames = [
-        ...BOARD_ARRAY, ...BUTT_ARRAY,
-        ...PROFILE_ARRAY, ...FURNITURE_ARRAY
+        "LIBRA CC2 Заглушка для навесов D12, пластик, белая",
+        //"Шуруп 3,5х20 мм, Zn",
+        "LIBRA H2 Скрытый навес универсальный",
+        "LIBRA WP2 Планка для навесов с вертикальной регулировкой, сталь",
+        // "Шуруп МЦП 45мм",
+        // "Конфирмат 7х50 мм, Zn",
+        //"Шкант 8х30 мм",
+        "Сушка Vibo в мод.600 мм",
+        "BI-MATERIALE Демпфер D5 мм, белый",
+        "Заглушка на чашку петли",
+        // "Шуруп 3,5х16 мм, Zn",
+        "Петля Blum Clip top Blumotion 110°, накладная",
+        "Заглушка на плечо петли (прямая)",
+        "Монтажная планка h=0 (прям. с эксц.) Expando D-5мм",
+        "Полкодержатель K-LINE с фиксацией, никель",
+        // "Стяжка Rastex 15/15 D",
+        "Дюбель DU 232 Twister",
+        "Монтажная планка h=0 (прям. с эксц.) под саморез",
+        // "Чашка петли",
+        //"Петля междверн. Clip top без пружины",
+        "Петля Blum Clip top 120° без пружины, накладная",
+        "Комплект силовых маханизмов AVENTOS HF top 25 (кр. на саморезы 4х35)",
+        //"Шуруп 3,5х35 мм, Zn",
+        "Комплект рычагов AVENTOS HF top F35 (KH 600-910 мм)",
+        "Комплект заглушек AVENTOS HF top, Белый"
     ];
+
+    //console.log(JSON.stringify(matnames, null, 2));
+    //console.log(JSON.stringify(FURNITURE_ARRAY, null, 2));
+    //console.log(JSON.stringify(BOARD_ARRAY, null, 2));
+
+    const placeholders = matnames.map(() => '?').join(',');
+
 
     try {
         const options = settings.db_options || null;
@@ -656,8 +818,10 @@ async function getDBMaterialInfo() {
             INNER JOIN MATERIAL_ADVANCE AS ma ON m.ID_M = ma.ID_M
             LEFT JOIN MEASURE AS me ON m.ID_MS = me.ID_MS
         WHERE
-            m.NAME_MAT IN (${matnames.map(() => '?').join(',')})
+            m.NAME_MAT IN (${placeholders})
         `;
+
+
         //  Запрос в БД
         const result_db = await executeQuery(sqlString, options, matnames);
 
@@ -1504,6 +1668,9 @@ async function main() {
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, callbackFunc, prj_array[ind]);
 
+                //  Поиск дополнительных материалов к Модели
+                findAdditionalMaterials(Model, prj_array[ind]);
+
                 //  Добавляем наименование заказа в данные
                 prj_array[ind].modelName = Article.Name;
                 //console.log(prj_array[ind].name);
@@ -1534,7 +1701,7 @@ async function main() {
             //  5. Формируем файлы спецификаций деталей
 
             //  6. Формируем файл Сметы проекта
-            await createEsimateExcelFile(prj_array);
+            //await createEsimateExcelFile(prj_array);
             //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);
