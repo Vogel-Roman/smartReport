@@ -108,6 +108,82 @@ function sanitizeFileName(name) {
         .substring(0, 200);
 };
 
+//  Функция последовательной сортировки массива объектов
+function smartSort(array, ...fields) {
+    // fields: ["field1", "asc"], ["field2", "desc"]
+    return [...array].sort((a, b) => {
+        for (let [field, order = 'asc'] of fields) {
+            if (a[field] < b[field]) return order === 'asc' ? -1 : 1;
+            if (a[field] > b[field]) return order === 'asc' ? 1 : -1;
+        };
+        return 0;
+    });
+};
+// /**
+//  * Умная сортировка массива объектов по нескольким полям
+//  * @param {Array} array - массив объектов для сортировки
+//  * @param {Array} criteria - массив критериев сортировки [["поле", "направление"], ...]
+//  * @returns {Array} - отсортированный массив
+//  */
+// function smartSort(array, criteria) {
+//     if (!array || !Array.isArray(array)) return [];
+//     if (!criteria || !Array.isArray(criteria) || criteria.length === 0) return array;
+
+//     /**
+//      * Получение вложенного значения по пути (например, "user.name")
+//      */
+//     function getNestedValue(obj, path) {
+//         return path.split('.').reduce((current, key) => {
+//             return current && current[key] !== undefined ? current[key] : undefined;
+//         }, obj);
+//     };
+
+//     /**
+//      * Сравнение значений разных типов
+//      */
+//     function compareValues(a, b, field) {
+//         // Числа
+//         if (typeof a === 'number' && typeof b === 'number') {
+//             return a - b;
+//         };
+
+//         // Даты
+//         if (a instanceof Date && b instanceof Date) {
+//             return a.getTime() - b.getTime();
+//         };
+
+//         // Строки (регистронезависимое сравнение для строк)
+//         if (typeof a === 'string' && typeof b === 'string') {
+//             return a.localeCompare(b, 'ru', { sensitivity: 'base' });
+//         };
+
+//         // Разные типы или другие случаи
+//         return String(a).localeCompare(String(b));
+//     };
+
+//     return [...array].sort((a, b) => {
+//         for (let [field, direction] of criteria) {
+//             // Получаем значения для сравнения
+//             let valueA = getNestedValue(a, field);
+//             let valueB = getNestedValue(b, field);
+
+//             // Обработка null/undefined
+//             valueA = valueA ?? '';
+//             valueB = valueB ?? '';
+
+//             // Сравнение
+//             let comparison = compareValues(valueA, valueB, field);
+
+//             if (comparison !== 0) {
+//                 // Применяем направление сортировки
+//                 return direction === 'desc' ? -comparison : comparison;
+//             }
+//             // Если равны, переходим к следующему критерию
+//         }
+//         return 0;
+//     });
+// }
+
 // Функция поиска отверстий принадлежжащих панели
 function findPanelHolesList(panel) {
 
@@ -1436,10 +1512,33 @@ async function createEsimateExcelFile(prj_arr) {
         classes.forEach(key => {
 
             const startRowInd = ind;
+            if (!estimate[key].items.length) return;
+
+            //  Сортировка материалов в пределах класса
+            let sort_options = [["materialName", "desc"]];
+            if (estimate[key].items[0].area) {
+                // Площадной материалв
+                sort_options = [
+                    ["materialTkn", "desc"], ["materialName", "asc"]
+                ];
+            } else if (estimate[key].items[0].length) {
+                //  Кромка или погонный материал
+                sort_options = [
+                    ["materialName", "desc"]
+                ];
+            } else if (estimate[key].items[0].count) {
+                //  Фурнитура
+                sort_options = [
+                    ["materialName", "desc"]
+                ];
+            };
+            //  Сортировка
+            //const items = smartSort(estimate[key].items, sort_options);
             const items = estimate[key].items;
+
             const k = c_koef[key] ? c_koef[key] : 0;
 
-            if (!items.length) return;
+            //if (!items.length) return;
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
 
