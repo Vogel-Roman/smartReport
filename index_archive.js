@@ -1020,150 +1020,141 @@ function setWorksheetSettings(worksheet) {
 //  Функуция создания файла Сметы
 async function createEsimateExcelFile(prj_arr) {
 
+    //#region Настройки стилей
+
     const row_height = 14;
     const font_size = 9;
+    const doc_font = { name: 'Arial', size: font_size + 7, bold: true };
+    const h_font = { name: 'Arial', size: font_size, bold: true };
+    const r_font = { name: 'Arial', size: font_size - 1, bold: false };
 
+    if (!settings.estimate.classes)
+        errFinish("Ошибка файла настроек - classes");
+    if (!settings.estimate.fillColor)
+        errFinish("Ошибка файла настроек - fillColor");
+    const c_koef = settings.estimate.classes;
+    const fill = settings.estimate.fillColor;
 
-    //  Стиль заглавной строки таблицы
-    function headerRowTableStyle(row, start, end) {
-        let rowStyle = {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'thin' },
-                bottom: { style: 'medium' },
-                right: { style: 'thin' }
-            },
-            alignment: { vertical: 'middle', horizontal: 'center' },
-            font: {
-                name: 'Arial',
-                size: font_size,
-                bold: true
-            }
-        };
-        let height = row_height;
-        row.height = Math.round(height / 0.75 * 10) / 10;
-
-        styleCellRange(row, start, end, rowStyle);
-
-        //  Первая ячейка
-        styleCellRange(row, start, start, {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'medium' },
-                bottom: { style: 'medium' },
-                right: { style: 'thin' }
-            }
-        });
-
-        //  Последняя ячейка
-        styleCellRange(row, end, end, {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'thin' },
-                bottom: { style: 'medium' },
-                right: { style: 'medium' }
-            }
-        });
+    //  Заливка ячеек
+    const fill_green = {
+        type: 'pattern', pattern: 'solid',
+        fgColor: { argb: fill.green }
+    };
+    const fill_yellow = {
+        type: 'pattern', pattern: 'solid',
+        fgColor: { argb: fill.yellow }
+    };
+    const fill_orange = {
+        type: 'pattern', pattern: 'solid',
+        fgColor: { argb: fill.orange }
+    };
+    const fill_red = {
+        type: 'pattern', pattern: 'solid',
+        fgColor: { argb: fill.red }
     };
 
-    //Стиль строки таблицы
-    function rowTableStyle(row, start, end) {
-        let rowStyle = {
-            border: {
-                top: { style: 'thin' },
-                left: { style: 'thin' },
-                bottom: { style: 'thin' },
-                right: { style: 'thin' }
-            },
-            alignment: { vertical: 'middle' },
-            font: {
-                name: 'Arial',
-                size: font_size - 1,
-                bold: false
-            }
+    //  Форматирование чисел
+    const f_format = '#,##0.00';
+    const n_format = '# ##0';
+
+    const algn_left = { indent: 1, horizontal: 'left', vertical: 'middle' };
+    const algn_right = { indent: 1, horizontal: 'right', vertical: 'middle' };
+    const algn_center = { horizontal: 'center', vertical: 'middle' };
+
+    //#endregion
+
+    //#region Стили строк таблицы
+
+    //  Установка высоты строки (пересчет)
+    function setRowHeght(num) {
+        return Math.round(num / 0.75 * 10) / 10;
+    };
+
+    //  Стиль заглавной строки таблицы
+    function setHeaderRowTableStyle(row, a, b) {
+        const s_b = 'medium';
+        const s_t = 'thin';
+        row.height = setRowHeght(row_height);
+        const algn = { vertical: 'middle', horizontal: 'center' }
+        const brd_cell = {        //  Граница ячейки
+            left: { style: s_t }, right: { style: s_t },
+            top: { style: s_b }, bottom: { style: s_b }
         };
-        let height = row_height - 0.5;
-        row.height = Math.round(height / 0.75 * 10) / 10;
+        const brd_left_cell = {   //  Граница левой ячейки
+            left: { style: s_b }, right: { style: s_t },
+            top: { style: s_b }, bottom: { style: s_b }
+        };
+        const brd_right_cell = {  //  Граница правой ячейки
+            left: { style: s_t }, right: { style: s_b },
+            top: { style: s_b }, bottom: { style: s_b }
+        };
+        let style = { border: brd_cell, font: h_font, alignment: algn, };
+        //  Применяем стили к диапазону ячеек a…b
+        styleCellRange(row, a, b, style);
+        styleCellRange(row, a, a, { border: brd_left_cell });
+        styleCellRange(row, b, b, { border: brd_right_cell });
+    };
 
-        styleCellRange(row, start, end, rowStyle);
-
-        //  Первая ячейка
-        styleCellRange(row, start, start, {
-            border: {
-                top: { style: 'thin' },
-                left: { style: 'medium' },
-                bottom: { style: 'thin' },
-                right: { style: 'thin' }
-            }
-        });
-
-        //  Последняя ячейка
-        styleCellRange(row, end, end, {
-            border: {
-                top: { style: 'thin' },
-                left: { style: 'thin' },
-                bottom: { style: 'thin' },
-                right: { style: 'medium' }
-            }
-        });
+    //  Стиль строки таблицы
+    function setRowTableStyle(row, a, b) {
+        const s_b = 'medium';
+        const s_t = 'thin';
+        row.height = setRowHeght(row_height - 1);
+        const brd_cell = {        //  Граница ячейки
+            left: { style: s_t }, right: { style: s_t },
+            top: { style: s_t }, bottom: { style: s_t }
+        };
+        const brd_left_cell = {   //  Граница левой ячейки
+            left: { style: s_b }, right: { style: s_t },
+            top: { style: s_t }, bottom: { style: s_t }
+        };
+        const brd_right_cell = {  //  Граница правой ячейки
+            left: { style: s_t }, right: { style: s_b },
+            top: { style: s_t }, bottom: { style: s_t }
+        };
+        let style = { border: brd_cell, font: r_font };
+        //  Применяем стили к диапазону ячеек a…b
+        styleCellRange(row, a, b, style);
+        styleCellRange(row, a, a, { border: brd_left_cell });
+        styleCellRange(row, b, b, { border: brd_right_cell });
     };
 
     //  Стиль последней строки таблицы
-    function endRowTableStyle(row, start, end) {
-        let rowStyle = {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'none' },
-                bottom: { style: 'medium' },
-                right: { style: 'none' }
-            },
-            font: {
-                name: 'Arial',
-                size: font_size - 1,
-                bold: true
-            }
+    function setEndRowTableStyle(row, a, b) {
+        const s_b = 'medium';
+        row.height = setRowHeght(row_height);
+        const brd_cell = {        //  Граница ячейки
+            left: { style: 'none' }, right: { style: 'none' },
+            top: { style: s_b }, bottom: { style: s_b }
         };
-        let height = row_height;
-        row.height = Math.round(height / 0.75 * 10) / 10;
-
-        styleCellRange(row, start, end, rowStyle);
-
-        //  Первая ячейка
-        styleCellRange(row, start, start, {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'medium' },
-                bottom: { style: 'medium' },
-                right: { style: 'none' }
-            }
-        });
-
-        //  Последняя ячейка
-        styleCellRange(row, end, end, {
-            border: {
-                top: { style: 'medium' },
-                left: { style: 'none' },
-                bottom: { style: 'medium' },
-                right: { style: 'medium' }
-            }
-        });
+        const brd_left_cell = {   //  Граница левой ячейки
+            left: { style: s_b }, right: { style: 'none' },
+            top: { style: s_b }, bottom: { style: s_b }
+        };
+        const brd_right_cell = {  //  Граница правой ячейки
+            left: { style: 'none' }, right: { style: s_b },
+            top: { style: s_b }, bottom: { style: s_b }
+        };
+        let style = { border: brd_cell, font: h_font };
+        //  Применяем стили к диапазону ячеек a…b
+        styleCellRange(row, a, b, style);
+        styleCellRange(row, a, a, { border: brd_left_cell });
+        styleCellRange(row, b, b, { border: brd_right_cell });
     };
+
+    //#endregion
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = settings.author;
     workbook.created = new Date();
-
-    const c_koef = settings.estimate.classes;
 
     // Цикл создания вкладок
     prj_arr.forEach(model => {
         const estimate = model.estimate_data;   //  Объект данных Сметы
         const name = model.name;                //  Имя изделия
         const sign = model.sign;                //  Обозначение в Проекте
-
         const sheet_name = `${sign}_${name}`.substring(0, 31);
         const worksheet = workbook.addWorksheet(sheet_name);
-
         setWorksheetSettings(worksheet);
 
         // Колонки
@@ -1183,38 +1174,70 @@ async function createEsimateExcelFile(prj_arr) {
 
         // Таблица (header row)
         const headerRowInd = 6;     //  Индекс верхней строки таблицы
-        const scol = 2;         //  Начальная колонка
+        const scol = 2;             //  Начальная колонка
         const headerRow = worksheet.getRow(headerRowInd);
 
+        //#region Шапка документа
+
+        //  Закрепляем строки до headerRowInd
+        worksheet.views = [{ state: 'frozen', ySplit: headerRowInd }];
+
+        worksheet.getRow(2).height = setRowHeght(24);
+        worksheet.getRow(3).height = setRowHeght(5);
+        styleCellRange(worksheet.getRow(3), scol, col_count, {
+            border: {
+                left: { style: 'none' }, right: { style: 'none' },
+                top: { style: 'medium' }, bottom: { style: 'none' }
+            }
+        });
+
+        //  Строка суммы (дуликат)
+        const top_total_row = worksheet.getRow(4);
+
+        worksheet.getRow(headerRowInd - 1).height = setRowHeght(5);
+
+        const docNameRow = worksheet.getRow(2);
+        docNameRow.alignment = { horizontal: 'left', vertical: 'middle' };
+        docNameRow.getCell(scol).font = doc_font;
+        docNameRow.getCell(scol).value =
+            `Расчет изделия ${model.modelName} проекта ${PROJECT_NAME}`;
+
+        //#endregion
+
+        //#region Шапка основной таблицы
 
         // Устанавливаем значения заголовков вручную (начиная с B)
         const headers = [
             '№', 'Артикул', 'Наименование',
             'Кол-во', 'Ед.', 'Цена', 'Сумма'
         ];
+
         for (let col = scol; col <= headers.length + scol - 1; col++) {
             const cell = headerRow.getCell(col);
             cell.value = headers[col - scol];  // Заголовок
         };
-        headerRowTableStyle(headerRow, scol, col_count);
+        setHeaderRowTableStyle(headerRow, scol, col_count);
 
-        const v_headers = ['k', 'Цена', 'Сумма', 'Доход'];
+        const v_headers = ['k', 'Цена (DB)', 'Сумма (DB)', 'ВД'];
         for (let col = 0; col < v_headers.length; col++) {
             const cell = headerRow.getCell(scol + 8 + col);
             cell.value = v_headers[col];  // Заголовок
-            console.log(v_headers[col]);
-
         };
-        headerRowTableStyle(headerRow, scol + 8, col_count + scol + v_headers.length - 1);
+        let end_col = col_count + scol + v_headers.length - 1;
+        setHeaderRowTableStyle(headerRow, scol + 8, end_col);
 
+        //#endregion
+
+        //  Индекс строки таблицы сразу после заголовка
         let ind = headerRowInd + 1;
 
         //  Колонка для коэффициента
-        const coeffColLetter = getColumnLetter(scol + 8);
-        const dbPriceLetter = getColumnLetter(scol + 9);
-        const dbSumLetter = getColumnLetter(scol + 10);
-        const vdLetter = getColumnLetter(scol + 11);
+        const coef_ltr = getColumnLetter(scol + 8);
+        const price_ltr = getColumnLetter(scol + 9);
+        const sum_ltr = getColumnLetter(scol + 10);
+        const res_ltr = getColumnLetter(scol + 11);
 
+        //  Тело таблицы
         let row_counter = 1;
         classes.forEach(key => {
 
@@ -1229,222 +1252,221 @@ async function createEsimateExcelFile(prj_arr) {
                 //  Текущая строка
                 const rn = ind + i;
                 const row = worksheet.getRow(rn);
-                rowTableStyle(row, scol, col_count);
+
+                //  Стиль строки основной таблицы
+                setRowTableStyle(row, scol, col_count);
+
+                //  Стиль строки расчетной таблицы
+                setRowTableStyle(row, scol + 8, scol + 11);
 
                 //  Выбор измеряемой величины
                 let val = "area";
                 if (item.length) val = "length";
                 if (item.count) val = "count";
 
-                //  Колонка цены т количества
+                //  Литеры колонок цены и количества
                 const cpl = getColumnLetter(scol + 3);
                 const cvl = getColumnLetter(scol + 5);
 
-                worksheet.getCell(`${coeffColLetter}${startRowInd}`).value = k;
-
-                //  Заполняем ячейки строки
-                row.getCell(scol + 0).value = row_counter++;
-                row.getCell(scol + 1).value = item.materialArticle;
-                row.getCell(scol + 2).value = item.materialName;
-                row.getCell(scol + 3).value = item[val];
-                row.getCell(scol + 4).value = item.materialUnit;
-                // row.getCell(scol + 5).value = item.materialPrice;
-
-                //------------------------------------------------------------//
-                //  Цена материала из базы
-                const dbPriceCell = worksheet.getCell(`${dbPriceLetter}${rn}`);
-                dbPriceCell.value = item.materialPrice;
-                dbPriceCell.font = {
-                    name: 'Arial',
-                    size: font_size - 1,
-                    bold: false
-                };
-                dbPriceCell.numFmt = '#,##0.00';
-                dbPriceCell.alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
-                dbPriceCell.border = {
-                    top: { style: 'thin' },
-                    left: { style: 'medium' },
-                    bottom: { style: 'thin' },
-                    right: { style: 'thin' }
-                };
-
-                const dbSumCell = worksheet.getCell(`${dbSumLetter}${rn}`)
-
-                //  Сумма материала из базы
-                dbSumCell.value = {
-                    formula: `${dbPriceLetter}${rn}*${cpl}${rn}`
-                };
-                dbSumCell.font = {
-                    name: 'Arial',
-                    size: font_size - 1,
-                    bold: false
-                };
-                dbSumCell.numFmt = '#,##0.00';
-                dbSumCell.alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
-                dbSumCell.border = {
-                    top: { style: 'thin' },
-                    left: { style: 'thin' },
-                    bottom: { style: 'thin' },
-                    right: { style: 'thin' }
-                };
-
-                //  Разница между суммой с наценкой и без
-                const valCell = worksheet.getCell(`${vdLetter}${rn}`)
-                valCell.value = {
-                    formula: `${cpl}${rn}*${cvl}${rn}-${dbSumLetter}${rn}`
-                };
-                valCell.font = {
-                    name: 'Arial',
-                    size: font_size - 1,
-                    bold: false
-                };
-                valCell.numFmt = '#,##0.00';
-                valCell.alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
-                valCell.border = {
-                    top: { style: 'thin' },
-                    left: { style: 'thin' },
-                    bottom: { style: 'thin' },
-                    right: { style: 'medium' }
-                };
-
-                //------------------------------------------------------------//
-
-                //  Цена
-                row.getCell(scol + 5).value = {
-                    formula: `${dbPriceLetter}${rn}*${coeffColLetter}${startRowInd}`
-                };
-
-                //  Сумма
-                row.getCell(scol + 6).value = {
-                    formula: `${cvl}${rn}*${cpl}${rn}`
-                };
-
-                //  Форматирование ячеек
-
                 //  Ячейка номера строки
-                row.getCell(scol + 0).alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
+                const counterCell = row.getCell(scol + 0);
+                counterCell.value = row_counter++;
+                counterCell.alignment = algn_right;
 
-                //  Ячейка названия материалы
-                row.getCell(scol + 1).alignment = {
-                    indent: 1,
-                    horizontal: 'left',
-                    vertical: 'middle'
-                };
+                //  Ячейка артикула материала
+                const articleCell = row.getCell(scol + 1);
+                articleCell.value = item.materialArticle;
+                articleCell.alignment = algn_left;
 
-                //  Ячейка названия материалы
-                row.getCell(scol + 2).alignment = {
-                    indent: 1,
-                    horizontal: 'left',
-                    vertical: 'middle'
-                };
+                //  Ячейка названия материала
+                const nameCell = row.getCell(scol + 2);
+                nameCell.value = item.materialName;
+                nameCell.alignment = algn_left;
 
                 //  Ячейка количества
-                row.getCell(scol + 3).alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
+                const countCell = row.getCell(scol + 3);
+                countCell.alignment = algn_right;
+                countCell.value = item[val];
+                countCell.numFmt = val == "count" ? n_format : f_format;
 
                 //  Ячейка ед. изм.
-                row.getCell(scol + 4).alignment = {
-                    horizontal: 'center',
-                    vertical: 'middle'
+                const unitCell = row.getCell(scol + 4);
+                unitCell.value = item.materialUnit;
+                unitCell.alignment = algn_center;
+
+                //  Ячейка цены с наценкой
+                const priceCoeffCell = row.getCell(scol + 5);
+                priceCoeffCell.alignment = algn_right;
+                priceCoeffCell.value = {
+                    formula: `${price_ltr}${rn}*${coef_ltr}${startRowInd}`
+                };
+                priceCoeffCell.numFmt = f_format;
+
+                //  Ячейка суммы с наценкой
+                const coefSumCell = row.getCell(scol + 6);
+                coefSumCell.value = {
+                    formula: `${cvl}${rn}*${cpl}${rn}`
+                };
+                coefSumCell.alignment = algn_right;
+                coefSumCell.numFmt = f_format;
+
+                //  Индикация материалов без цены
+                if (!item.materialUnit) {
+                    priceCoeffCell.fill = fill_red;
+                    coefSumCell.fill = fill_red;
                 };
 
-                //  Ячейка цены
-                row.getCell(scol + 5).alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
+                //------------------------------------------------------------//
+                //  Устанавливаем ширины колонок
+                worksheet.getColumn(`${coef_ltr}`).width = 10;
+                worksheet.getColumn(`${price_ltr}`).width = 12;
+                worksheet.getColumn(`${sum_ltr}`).width = 12;
+                worksheet.getColumn(`${res_ltr}`).width = 12;
 
-                //  Ячейка суммы
-                row.getCell(scol + 6).alignment = {
-                    indent: 1,
-                    horizontal: 'right',
-                    vertical: 'middle'
-                };
+                //  Коэффициент наценки класса
+                const coefCell = worksheet.getCell(`${coef_ltr}${startRowInd}`);
+                coefCell.alignment = algn_center;
+                coefCell.value = k;
+                coefCell.fill = fill_yellow;
 
-                //  Форматирование числа
-                if (val == "count") {
-                    row.getCell(scol + 3).numFmt = '# ##0';
-                } else {
-                    row.getCell(scol + 3).numFmt = '#,##0.00';
+                //  Цена материала из базы
+                const dbPriceCell = worksheet.getCell(`${price_ltr}${rn}`);
+                dbPriceCell.alignment = algn_right;
+                dbPriceCell.value = item.materialPrice;
+                dbPriceCell.numFmt = f_format;
+
+                //  Сумма материала из базы
+                const dbSumCell = worksheet.getCell(`${sum_ltr}${rn}`)
+                dbSumCell.alignment = algn_right;
+                dbSumCell.value = { formula: `${price_ltr}${rn}*${cpl}${rn}` };
+                dbSumCell.numFmt = f_format;
+
+                //  Разница между суммой с наценкой и без
+                const valCell = worksheet.getCell(`${res_ltr}${rn}`);
+                valCell.alignment = algn_right;
+                valCell.value = {
+                    formula: `${cpl}${rn}*${cvl}${rn}-${sum_ltr}${rn}`
                 };
-                row.getCell(scol + 5).numFmt = '#,##0.00';
-                row.getCell(scol + 6).numFmt = '#,##0.00';
+                valCell.numFmt = f_format
+                //------------------------------------------------------------//
+
+
             };
 
             ind += items.length;
             const endRowInd = ind - 1;
 
             //  Объединяем все ячейки в этой колонке для диапазона строк
-            const cellAdress = `${coeffColLetter}${startRowInd}`;
+            const cellAdress = `${coef_ltr}${startRowInd}`;
             worksheet.mergeCells(
-                `${coeffColLetter}${startRowInd}:${coeffColLetter}${endRowInd}`
+                `${coef_ltr}${startRowInd}:${coef_ltr}${endRowInd}`
             );
-            const mergedCell = worksheet.getCell(cellAdress);
-            mergedCell.alignment = {
-                vertical: 'middle',
-                horizontal: 'center'
-            };
-            mergedCell.numFmt = '#,##0.00';
-            mergedCell.font = {
-                name: 'Arial',
-                size: font_size - 1,
-                bold: false
-            };
         });
 
-        const row = worksheet.getRow(ind);
-        endRowTableStyle(row, scol, col_count);
-        const csm = getColumnLetter(scol + 6);
+        //#region Подвал таблицы
 
-        //  Ячейка Итого
-        row.getCell(scol + 5).value = "Итого:";
-        row.getCell(scol + 5).alignment = {
-            horizontal: 'right',
-            vertical: 'middle'
+        const row = worksheet.getRow(ind);
+        setEndRowTableStyle(row, scol, col_count);
+
+        const end_res_col = scol + 8;
+        setEndRowTableStyle(row, end_res_col, end_col);
+
+        const tsm_ltr = getColumnLetter(scol + 6);
+        const tres_sum_ltr = getColumnLetter(end_res_col + 2);
+        const tres_vd_ltr = getColumnLetter(end_res_col + 3);
+
+        //  текст ИТОГО основной таблицы
+        const total_row_res_text = row.getCell(end_res_col + 1);
+        total_row_res_text.value = "Итого:";
+        total_row_res_text.font.size = font_size;
+        total_row_res_text.alignment = algn_right;
+        total_row_res_text.border = {
+            left: { style: 'none' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
         };
-        row.getCell(scol + 5).border = {
-            top: { style: 'medium' },
-            left: { style: 'none' },
-            bottom: { style: 'medium' },
-            right: { style: 'thin' }
+
+        //  Текст ИТОГО вспомогательной таблицы
+        const total_row_text = row.getCell(scol + 5);
+        total_row_text.value = "Итого:";
+        total_row_text.font.size = font_size;
+        total_row_text.alignment = algn_right;
+        total_row_text.border = {
+            left: { style: 'none' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
         };
 
         //  Ячейка суммы
-        row.getCell(scol + 6).value = {
-            formula: `SUM(${csm}${headerRowInd + 1}:${csm}${ind - 1})`
+        const total_row_val = row.getCell(scol + 6);
+        total_row_val.value = {
+            formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
         };
-        row.getCell(scol + 6).numFmt = '# ##0';
-        row.getCell(scol + 6).alignment = {
-            indent: 1,
-            horizontal: 'right',
-            vertical: 'middle'
+        total_row_val.numFmt = n_format;
+        total_row_val.alignment = algn_right;
+
+        //  Ячейка итоговой суммы из Базы
+        const total_row_res_val = row.getCell(end_res_col + 2);
+        total_row_res_val.value = {
+            formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        total_row_res_val.numFmt = n_format;
+        total_row_res_val.alignment = algn_right;
+        total_row_res_val.border = {
+            left: { style: 'thin' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
         };
 
-        //  Устанавливаем диапазон печати
-        // Получаем номер последней строки, где есть данные
-        // Устанавливаем область печати: колонки A-scm, все строки с данными
-        worksheet.pageSetup.printArea = `A1:${csm}${worksheet.rowCount}`;
+        //  Ячейка итоговой суммы ВД
+        const total_row_res_vd_val = row.getCell(end_res_col + 3);
+        total_row_res_vd_val.value = {
+            formula: `SUM(${tres_vd_ltr}${headerRowInd + 1}:${tres_vd_ltr}${ind - 1})`
+        };
+        total_row_res_vd_val.numFmt = n_format;
+        total_row_res_vd_val.alignment = algn_right;
+        //#endregion
 
+        //  Дубликаты расчетов в шапке документа
+        const d_total_text = top_total_row.getCell(scol + 5);
+        d_total_text.value = "Итого:";
+        d_total_text.font = h_font;
+        d_total_text.font.size = font_size;
+        d_total_text.alignment = algn_right;
+
+        const d_total_val = top_total_row.getCell(scol + 6);
+        d_total_val.value = {
+            formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
+        };
+        d_total_val.font = h_font;
+        d_total_val.font.size = font_size;
+        d_total_val.numFmt = n_format;
+        d_total_val.alignment = algn_right;
+
+        const d_totalres_text = top_total_row.getCell(end_res_col + 1);
+        d_totalres_text.value = "Итого:";
+        d_totalres_text.font = h_font;
+        d_totalres_text.font.size = font_size;
+        d_totalres_text.alignment = algn_right;
+
+        const d_totalres_val = top_total_row.getCell(end_res_col + 2);
+        d_totalres_val.value = {
+            formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        d_totalres_val.font = h_font;
+        d_totalres_val.font.size = font_size;
+        d_totalres_val.numFmt = n_format;
+        d_totalres_val.alignment = algn_right;
+
+        const d_totalvd_val = top_total_row.getCell(end_res_col + 3);
+        d_totalvd_val.value = {
+            formula: `SUM(${tres_vd_ltr}${headerRowInd + 1}:${tres_vd_ltr}${ind - 1})`
+        };
+        d_totalvd_val.font = h_font;
+        d_totalvd_val.font.size = font_size;
+        d_totalvd_val.numFmt = n_format;
+        d_totalvd_val.alignment = algn_right;
+
+        //  Получаем номер последней строки, где есть данные
+        //  Устанавливаем область печати: колонки A-scm, все строки с данными
+        worksheet.pageSetup.printArea = `A1:${tsm_ltr}${worksheet.rowCount}`;
     });
 
     // Сохранение документа
@@ -1481,6 +1503,9 @@ async function main() {
             if (Action.LoadModel(filepath)) {
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, callbackFunc, prj_array[ind]);
+
+                //  Добавляем наименование заказа в данные
+                prj_array[ind].modelName = Article.Name;
                 //console.log(prj_array[ind].name);
                 count++;
             };

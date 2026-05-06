@@ -1024,6 +1024,7 @@ async function createEsimateExcelFile(prj_arr) {
 
     const row_height = 14;
     const font_size = 9;
+    const doc_font = { name: 'Arial', size: font_size + 7, bold: true };
     const h_font = { name: 'Arial', size: font_size, bold: true };
     const r_font = { name: 'Arial', size: font_size - 1, bold: false };
 
@@ -1064,11 +1065,16 @@ async function createEsimateExcelFile(prj_arr) {
 
     //#region Стили строк таблицы
 
+    //  Установка высоты строки (пересчет)
+    function setRowHeght(num) {
+        return Math.round(num / 0.75 * 10) / 10;
+    };
+
     //  Стиль заглавной строки таблицы
     function setHeaderRowTableStyle(row, a, b) {
         const s_b = 'medium';
         const s_t = 'thin';
-        row.height = Math.round(row_height / 0.75 * 10) / 10;
+        row.height = setRowHeght(row_height);
         const algn = { vertical: 'middle', horizontal: 'center' }
         const brd_cell = {        //  Граница ячейки
             left: { style: s_t }, right: { style: s_t },
@@ -1093,7 +1099,7 @@ async function createEsimateExcelFile(prj_arr) {
     function setRowTableStyle(row, a, b) {
         const s_b = 'medium';
         const s_t = 'thin';
-        row.height = Math.round((row_height - 1) / 0.75 * 10) / 10;
+        row.height = setRowHeght(row_height - 1);
         const brd_cell = {        //  Граница ячейки
             left: { style: s_t }, right: { style: s_t },
             top: { style: s_t }, bottom: { style: s_t }
@@ -1116,7 +1122,7 @@ async function createEsimateExcelFile(prj_arr) {
     //  Стиль последней строки таблицы
     function setEndRowTableStyle(row, a, b) {
         const s_b = 'medium';
-        row.height = Math.round(row_height / 0.75 * 10) / 10;
+        row.height = setRowHeght(row_height);
         const brd_cell = {        //  Граница ячейки
             left: { style: 'none' }, right: { style: 'none' },
             top: { style: s_b }, bottom: { style: s_b }
@@ -1168,10 +1174,37 @@ async function createEsimateExcelFile(prj_arr) {
 
         // Таблица (header row)
         const headerRowInd = 6;     //  Индекс верхней строки таблицы
-        const scol = 2;         //  Начальная колонка
+        const scol = 2;             //  Начальная колонка
         const headerRow = worksheet.getRow(headerRowInd);
 
-        //#region Шапка таблицы
+        //#region Шапка документа
+
+        //  Закрепляем строки до headerRowInd
+        worksheet.views = [{ state: 'frozen', ySplit: headerRowInd }];
+
+        worksheet.getRow(2).height = setRowHeght(24);
+        worksheet.getRow(3).height = setRowHeght(5);
+        styleCellRange(worksheet.getRow(3), scol, col_count, {
+            border: {
+                left: { style: 'none' }, right: { style: 'none' },
+                top: { style: 'medium' }, bottom: { style: 'none' }
+            }
+        });
+
+        //  Строка суммы (дуликат)
+        const top_total_row = worksheet.getRow(4);
+
+        worksheet.getRow(headerRowInd - 1).height = setRowHeght(5);
+
+        const docNameRow = worksheet.getRow(2);
+        docNameRow.alignment = { horizontal: 'left', vertical: 'middle' };
+        docNameRow.getCell(scol).font = doc_font;
+        docNameRow.getCell(scol).value =
+            `Расчет изделия ${model.modelName} проекта ${PROJECT_NAME}`;
+
+        //#endregion
+
+        //#region Шапка основной таблицы
 
         // Устанавливаем значения заголовков вручную (начиная с B)
         const headers = [
@@ -1276,6 +1309,12 @@ async function createEsimateExcelFile(prj_arr) {
                 };
                 coefSumCell.alignment = algn_right;
                 coefSumCell.numFmt = f_format;
+
+                //  Индикация материалов без цены
+                if (!item.materialUnit) {
+                    priceCoeffCell.fill = fill_red;
+                    coefSumCell.fill = fill_red;
+                };
 
                 //------------------------------------------------------------//
                 //  Устанавливаем ширины колонок
@@ -1385,6 +1424,46 @@ async function createEsimateExcelFile(prj_arr) {
         total_row_res_vd_val.alignment = algn_right;
         //#endregion
 
+        //  Дубликаты расчетов в шапке документа
+        const d_total_text = top_total_row.getCell(scol + 5);
+        d_total_text.value = "Итого:";
+        d_total_text.font = h_font;
+        d_total_text.font.size = font_size;
+        d_total_text.alignment = algn_right;
+
+        const d_total_val = top_total_row.getCell(scol + 6);
+        d_total_val.value = {
+            formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
+        };
+        d_total_val.font = h_font;
+        d_total_val.font.size = font_size;
+        d_total_val.numFmt = n_format;
+        d_total_val.alignment = algn_right;
+
+        const d_totalres_text = top_total_row.getCell(end_res_col + 1);
+        d_totalres_text.value = "Итого:";
+        d_totalres_text.font = h_font;
+        d_totalres_text.font.size = font_size;
+        d_totalres_text.alignment = algn_right;
+
+        const d_totalres_val = top_total_row.getCell(end_res_col + 2);
+        d_totalres_val.value = {
+            formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        d_totalres_val.font = h_font;
+        d_totalres_val.font.size = font_size;
+        d_totalres_val.numFmt = n_format;
+        d_totalres_val.alignment = algn_right;
+
+        const d_totalvd_val = top_total_row.getCell(end_res_col + 3);
+        d_totalvd_val.value = {
+            formula: `SUM(${tres_vd_ltr}${headerRowInd + 1}:${tres_vd_ltr}${ind - 1})`
+        };
+        d_totalvd_val.font = h_font;
+        d_totalvd_val.font.size = font_size;
+        d_totalvd_val.numFmt = n_format;
+        d_totalvd_val.alignment = algn_right;
+
         //  Получаем номер последней строки, где есть данные
         //  Устанавливаем область печати: колонки A-scm, все строки с данными
         worksheet.pageSetup.printArea = `A1:${tsm_ltr}${worksheet.rowCount}`;
@@ -1424,6 +1503,9 @@ async function main() {
             if (Action.LoadModel(filepath)) {
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, callbackFunc, prj_array[ind]);
+
+                //  Добавляем наименование заказа в данные
+                prj_array[ind].modelName = Article.Name;
                 //console.log(prj_array[ind].name);
                 count++;
             };
