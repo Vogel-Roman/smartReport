@@ -20,6 +20,12 @@
             "M4": 2.0,
             "FSD1": 1.85,
             "FSD2": 1.85
+        },
+        "fillColor": {
+            "green": "CCFFCC",
+            "yellow": "FFFFCC",
+            "orange": "FFCC99",
+            "red": "FFCCCC"
         }
     },
     "enterprise": {
