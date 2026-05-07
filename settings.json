@@ -31,10 +31,12 @@
             "INST1": 2.1,
             "INST2": 2.4
         },
+        "fontFamily": "Arial",
         "fillColor": {
             "green": "CCFFCC",
             "yellow": "FFFFCC",
             "orange": "FFCC99",
+            "blue": "CCECFF",
             "red": "FFCCCC"
         }
     },

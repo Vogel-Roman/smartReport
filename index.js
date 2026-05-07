@@ -259,11 +259,23 @@ function findPanelHolesList(panel) {
             let endInPanel =
                 cleanPoint(getHoleEndPoint(hole, fastener, panel), 1);
 
+            /**
+             * Если обсолютное значение координат x или y свойства dirInPanel
+             * равно 1, то это торцевое отверстие. А если абсолютное значение
+             * координаты z равно 1, то это отвестие в пласть (по умолчанию)
+             */
+            let typeHole =
+                (
+                    Math.abs(dirInPanel.x) == 1 ||
+                    Math.abs(dirInPanel.y) == 1
+                ) ? 2 : 1;   //  Отверстие в пласть 1, торцевое 2
+
             if (isPointInBounds(endInPanel, panel.GMin, panel.GMax)) {
                 result.push({
                     depth: round(hole.Depth, 2),
                     diameter: hole.Radius * 2,
                     depth: round(hole.Depth, 1),
+                    type: typeHole,
                     drillMode: hole.DrillMode,
                     dirInPanel: dirInPanel,
                     positionInPanel: posInPanel
@@ -1136,6 +1148,7 @@ function setProjectEstimateData(db_data, prj) {
                     // Ищем существующее отверстие с такими же параметрами
                     const existingDrill = acc[key].drillInfo.find(
                         d => d.diameter === drill.diameter &&
+                            d.type === drill.type &&
                             d.depth === drill.depth &&
                             d.drillMode === drill.drillMode
                     );
@@ -1148,6 +1161,7 @@ function setProjectEstimateData(db_data, prj) {
                         acc[key].drillInfo.push({
                             diameter: drill.diameter,
                             depth: drill.depth,
+                            type: drill.type,
                             drillMode: drill.drillMode,
                             count: item.prjCount || 1
                         });
@@ -1324,16 +1338,21 @@ async function createEsimateExcelFile(prj_arr) {
 
     //#region Настройки стилей
 
-    const row_height = 14;
-    const font_size = 9;
-    const doc_font = { name: 'Arial', size: font_size + 7, bold: true };
-    const h_font = { name: 'Arial', size: font_size, bold: true };
-    const r_font = { name: 'Arial', size: font_size - 1, bold: false };
-
     if (!settings.estimate.classes)
         errFinish("Ошибка файла настроек - classes");
     if (!settings.estimate.fillColor)
         errFinish("Ошибка файла настроек - fillColor");
+
+    const fontFamily = settings.estimate.fontFamily ?
+        settings.estimate.fontFamily : "Arial";
+
+    const row_height = 14;
+    const font_size = 9;
+    const doc_font = { name: fontFamily, size: font_size + 7, bold: true };
+    const tabl_font = { name: fontFamily, size: font_size + 2, bold: true };
+    const h_font = { name: fontFamily, size: font_size, bold: true };
+    const r_font = { name: fontFamily, size: font_size - 1, bold: false };
+
     const c_koef = settings.estimate.classes;
     const fill = settings.estimate.fillColor;
 
@@ -1354,6 +1373,10 @@ async function createEsimateExcelFile(prj_arr) {
         type: 'pattern', pattern: 'solid',
         fgColor: { argb: fill.red }
     };
+    const fill_blue = {
+        type: 'pattern', pattern: 'solid',
+        fgColor: { argb: fill.blue }
+    };
 
     //  Форматирование чисел
     const f_format = '#,##0.00';
@@ -1366,6 +1389,14 @@ async function createEsimateExcelFile(prj_arr) {
     //#endregion
 
     //#region Стили строк таблицы
+
+    function createHeaderRowTable(row, array, start) {
+        for (let col = 0; col < array.length; col++) {
+            row.getCell(start + col).value = array[col];
+        };
+        //  Применяем стиль к диапазону колонок
+        setHeaderRowTableStyle(row, start, start + array.length - 1);
+    };
 
     //  Установка высоты строки (пересчет)
     function setRowHeght(num) {
@@ -1471,79 +1502,73 @@ async function createEsimateExcelFile(prj_arr) {
             { width: 12 }       //  Сумма
         ];
 
-        //  Количество колонок документа
-        const col_count = worksheet.columns.length;
-
-        // Таблица (header row)
-        const headerRowInd = 6;     //  Индекс верхней строки таблицы
         const scol = 2;             //  Начальная колонка
+        const offset = 3;           //  Смещение вспомогательной таблицы
+        const headerRowInd = 6;     //  Индекс верхней строки таблицы
         const headerRow = worksheet.getRow(headerRowInd);
 
+        //  Заголовки основной таблицы
+        const headers = [
+            '№', 'Артикул', 'Наименование',
+            'Кол-во', 'Ед.', 'Цена', 'Сумма'
+        ];
+        //  Заголовки вспомогательной таблицы
+        const v_headers = ['k', 'Цена (DB)', 'Сумма (DB)', 'ВД'];
+
         //#region Шапка документа
-
-        //  Закрепляем строки до headerRowInd
-        worksheet.views = [{ state: 'frozen', ySplit: headerRowInd }];
-
         worksheet.getRow(2).height = setRowHeght(24);
         worksheet.getRow(3).height = setRowHeght(5);
-        styleCellRange(worksheet.getRow(3), scol, col_count, {
+        styleCellRange(worksheet.getRow(3), scol, worksheet.columns.length, {
             border: {
                 left: { style: 'none' }, right: { style: 'none' },
                 top: { style: 'medium' }, bottom: { style: 'none' }
             }
         });
 
-        //  Строка суммы (дуликат)
-        const top_total_row = worksheet.getRow(4);
-
+        //  Строка суммы (дубликат)
+        const top_total_row = worksheet.getRow(headerRowInd - 2);
+        top_total_row.height = setRowHeght(row_height);
         worksheet.getRow(headerRowInd - 1).height = setRowHeght(5);
 
+        //  Название документа
         const docNameRow = worksheet.getRow(2);
         docNameRow.alignment = { horizontal: 'left', vertical: 'middle' };
-        docNameRow.getCell(scol).font = doc_font;
+        docNameRow.getCell(scol).font = { ...doc_font };
         docNameRow.getCell(scol).value =
             `Расчет изделия ${model.modelName} проекта ${PROJECT_NAME}`;
+        //#endregion   
 
-        //#endregion
+        //#region Таблица материалов и фурнитуры
+        //  Название таблицы материалов и фурнитуры
+        const mTableHeaderCell = top_total_row.getCell(scol);
+        mTableHeaderCell.value = "Спецификация материалов и фурнитуры";
+        mTableHeaderCell.font = { ...tabl_font };
+        mTableHeaderCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
-        //#region Шапка основной таблицы
-
-        // Устанавливаем значения заголовков вручную (начиная с B)
-        const headers = [
-            '№', 'Артикул', 'Наименование',
-            'Кол-во', 'Ед.', 'Цена', 'Сумма'
-        ];
-
-        for (let col = scol; col <= headers.length + scol - 1; col++) {
-            const cell = headerRow.getCell(col);
-            cell.value = headers[col - scol];  // Заголовок
-        };
-        setHeaderRowTableStyle(headerRow, scol, col_count);
-
-        const v_headers = ['k', 'Цена (DB)', 'Сумма (DB)', 'ВД'];
-        for (let col = 0; col < v_headers.length; col++) {
-            const cell = headerRow.getCell(scol + 8 + col);
-            cell.value = v_headers[col];  // Заголовок
-        };
-        let end_col = col_count + scol + v_headers.length - 1;
-        setHeaderRowTableStyle(headerRow, scol + 8, end_col);
-
-        //#endregion
+        //  Шапка основной таблицы
+        createHeaderRowTable(headerRow, headers, scol);
+        //  Шапка вспомогательной таблицы
+        createHeaderRowTable(headerRow, v_headers, scol + headers.length + offset);
 
         //  Индекс строки таблицы сразу после заголовка
         let ind = headerRowInd + 1;
 
-        //  Колонка для коэффициента
-        const coef_ltr = getColumnLetter(scol + 8);
-        const price_ltr = getColumnLetter(scol + 9);
-        const sum_ltr = getColumnLetter(scol + 10);
-        const res_ltr = getColumnLetter(scol + 11);
+        //  Литеры колонок вспомогательной таблицы
+        const v_col = scol + headers.length + offset
+        const coef_ltr = getColumnLetter(v_col + 0);
+        const price_ltr = getColumnLetter(v_col + 1);
+        const sum_ltr = getColumnLetter(v_col + 2);
+        const res_ltr = getColumnLetter(v_col + 3);
+
+        //  Устанавливаем ширины колонок вспомогательной таблицы
+        worksheet.getColumn(`${coef_ltr}`).width = 10;
+        worksheet.getColumn(`${price_ltr}`).width = 12;
+        worksheet.getColumn(`${sum_ltr}`).width = 12;
+        worksheet.getColumn(`${res_ltr}`).width = 12;
 
         //  Тело таблицы
         let row_counter = 1;
         classes.forEach(key => {
-
-            const startRowInd = ind;
             if (!estimate[key].items.length) return;
 
             //  Сортировка материалов в пределах класса
@@ -1566,23 +1591,32 @@ async function createEsimateExcelFile(prj_arr) {
             };
             //  Сортировка
             const items = smartSort(estimate[key].items, sort_options);
-            //const items = estimate[key].items;
 
+            //  Коэффициент наценки
             const k = c_koef[key] ? c_koef[key] : 0;
 
-            //if (!items.length) return;
+            //  Цикл по массиву класса keyя
             for (let i = 0; i < items.length; i++) {
+                //  Объект материала
                 const item = items[i];
 
                 //  Текущая строка
-                const rn = ind + i;
+                const rn = ind + i; //  Индекс текущей строки
                 const row = worksheet.getRow(rn);
 
                 //  Стиль строки основной таблицы
-                setRowTableStyle(row, scol, col_count);
+                setRowTableStyle(
+                    row,
+                    scol,
+                    scol + headers.length - 1
+                );
 
                 //  Стиль строки расчетной таблицы
-                setRowTableStyle(row, scol + 8, scol + 11);
+                setRowTableStyle(
+                    row,
+                    scol + headers.length + offset,
+                    scol + headers.length + offset + v_headers.length - 1
+                );
 
                 //  Выбор измеряемой величины
                 let val = "area";
@@ -1623,7 +1657,7 @@ async function createEsimateExcelFile(prj_arr) {
                 const priceCoeffCell = row.getCell(scol + 5);
                 priceCoeffCell.alignment = algn_right;
                 priceCoeffCell.value = {
-                    formula: `${price_ltr}${rn}*$${coef_ltr}$${startRowInd}`
+                    formula: `${price_ltr}${rn}*$${coef_ltr}$${ind}`
                 };
                 priceCoeffCell.numFmt = f_format;
 
@@ -1643,14 +1677,9 @@ async function createEsimateExcelFile(prj_arr) {
                 };
 
                 //------------------------------------------------------------//
-                //  Устанавливаем ширины колонок
-                worksheet.getColumn(`${coef_ltr}`).width = 10;
-                worksheet.getColumn(`${price_ltr}`).width = 12;
-                worksheet.getColumn(`${sum_ltr}`).width = 12;
-                worksheet.getColumn(`${res_ltr}`).width = 12;
 
                 //  Коэффициент наценки класса
-                const coefCell = worksheet.getCell(`${coef_ltr}${startRowInd}`);
+                const coefCell = worksheet.getCell(`${coef_ltr}${ind}`);
                 coefCell.alignment = algn_center;
                 coefCell.value = k;
                 coefCell.numFmt = f_format;
@@ -1677,43 +1706,41 @@ async function createEsimateExcelFile(prj_arr) {
                 valCell.numFmt = f_format
                 //------------------------------------------------------------//
 
-
             };
 
-            ind += items.length;
-            const endRowInd = ind - 1;
-
             //  Объединяем все ячейки в этой колонке для диапазона строк
-            const cellAdress = `${coef_ltr}${startRowInd}`;
-            worksheet.mergeCells(
-                `${coef_ltr}${startRowInd}:${coef_ltr}${endRowInd}`
-            );
+            let last_ind = ind + items.length - 1;
+            worksheet.mergeCells(`${coef_ltr}${ind}:${coef_ltr}${last_ind}`);
+            ind += items.length;
         });
 
-        //#region Подвал таблицы
-
         const row = worksheet.getRow(ind);
-        setEndRowTableStyle(row, scol, col_count);
 
-        const end_res_col = scol + 8;
-        setEndRowTableStyle(row, end_res_col, end_col);
+        const end_res_col = scol + headers.length;
+        const endMainTableCol = scol + headers.length - 1;
 
-        const tsm_ltr = getColumnLetter(scol + 6);
-        const tres_sum_ltr = getColumnLetter(end_res_col + 2);
-        const tres_vd_ltr = getColumnLetter(end_res_col + 3);
+        //  Стиль строки основной таблицы
+        setEndRowTableStyle(
+            row,
+            scol,
+            scol + headers.length - 1
+        );
 
+        //  Стиль строки расчетной таблицы
+        setEndRowTableStyle(
+            row,
+            scol + headers.length + offset,
+            scol + headers.length + offset + v_headers.length - 1
+        );
+
+        //  Литера колонки Суммы основнйо таблицы
+        const tsm_ltr = getColumnLetter(endMainTableCol);  // H
+        const tres_sum_ltr = getColumnLetter(endMainTableCol + offset + 3);
+        const tres_vd_ltr = getColumnLetter(endMainTableCol + offset + 4);
+
+        //  --- Основная таблица
         //  текст ИТОГО основной таблицы
-        const total_row_res_text = row.getCell(end_res_col + 1);
-        total_row_res_text.value = "Итого:";
-        total_row_res_text.font.size = font_size;
-        total_row_res_text.alignment = algn_right;
-        total_row_res_text.border = {
-            left: { style: 'none' }, right: { style: 'thin' },
-            top: { style: 'medium' }, bottom: { style: 'medium' }
-        };
-
-        //  Текст ИТОГО вспомогательной таблицы
-        const total_row_text = row.getCell(scol + 5);
+        const total_row_text = row.getCell(endMainTableCol - 1);//scol + 5
         total_row_text.value = "Итого:";
         total_row_text.font.size = font_size;
         total_row_text.alignment = algn_right;
@@ -1721,17 +1748,47 @@ async function createEsimateExcelFile(prj_arr) {
             left: { style: 'none' }, right: { style: 'thin' },
             top: { style: 'medium' }, bottom: { style: 'medium' }
         };
+        //  Дубликат в шапке таблицы текста ИТОГО
+        const d_total_text = top_total_row.getCell(endMainTableCol - 1);
+        d_total_text.value = total_row_text.value;
+        d_total_text.font = { ...tabl_font };
+        d_total_text.alignment = algn_right;
 
-        //  Ячейка суммы
-        const total_row_val = row.getCell(scol + 6);
+        //  Дубликат суммы в шапке таблицы
+        const d_total_val = top_total_row.getCell(endMainTableCol);
+        d_total_val.value = {
+            formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
+        };
+        d_total_val.font = { ...tabl_font };
+        d_total_val.numFmt = n_format;
+        d_total_val.alignment = algn_right;
+
+        //  Ячейка итоговой суммы с наценкой
+        const total_row_val = row.getCell(endMainTableCol);
         total_row_val.value = {
             formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
         };
         total_row_val.numFmt = n_format;
         total_row_val.alignment = algn_right;
 
+        //  --- Вспомогательная таблица
+        //  Текст ИТОГО вспомогательной таблицы
+        const total_row_res_text = row.getCell(endMainTableCol + offset + 2);
+        total_row_res_text.value = "Итого:";
+        total_row_res_text.font.size = font_size;
+        total_row_res_text.alignment = algn_right;
+        total_row_res_text.border = {
+            left: { style: 'none' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
+        };
+        //  Дубликат в шапке вспомогательной таблицы текста ИТОГО
+        const d_totalres_text = top_total_row.getCell(endMainTableCol + offset + 2);
+        d_totalres_text.value = total_row_res_text.value;
+        d_totalres_text.font = { ...tabl_font };
+        d_totalres_text.alignment = algn_right;
+
         //  Ячейка итоговой суммы из Базы
-        const total_row_res_val = row.getCell(end_res_col + 2);
+        const total_row_res_val = row.getCell(endMainTableCol + offset + 3);
         total_row_res_val.value = {
             formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
         };
@@ -1742,54 +1799,48 @@ async function createEsimateExcelFile(prj_arr) {
             top: { style: 'medium' }, bottom: { style: 'medium' }
         };
 
+        //  Дубликат суммы из базы в шапке таблицы
+        const d_totalres_val = top_total_row.getCell(endMainTableCol + offset + 3);
+        d_totalres_val.value = {
+            formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        d_totalres_val.font = { ...tabl_font };
+        d_totalres_val.numFmt = n_format;
+        d_totalres_val.alignment = algn_right;
+
         //  Ячейка итоговой суммы ВД
-        const total_row_res_vd_val = row.getCell(end_res_col + 3);
+        const total_row_res_vd_val = row.getCell(endMainTableCol + offset + 4);
         total_row_res_vd_val.value = {
             formula: `SUM(${tres_vd_ltr}${headerRowInd + 1}:${tres_vd_ltr}${ind - 1})`
         };
         total_row_res_vd_val.numFmt = n_format;
         total_row_res_vd_val.alignment = algn_right;
-        //#endregion
 
-        //  Дубликаты расчетов в шапке документа
-        const d_total_text = top_total_row.getCell(scol + 5);
-        d_total_text.value = "Итого:";
-        d_total_text.font = h_font;
-        d_total_text.font.size = font_size;
-        d_total_text.alignment = algn_right;
-
-        const d_total_val = top_total_row.getCell(scol + 6);
-        d_total_val.value = {
-            formula: `SUM(${tsm_ltr}${headerRowInd + 1}:${tsm_ltr}${ind - 1})`
-        };
-        d_total_val.font = h_font;
-        d_total_val.font.size = font_size;
-        d_total_val.numFmt = n_format;
-        d_total_val.alignment = algn_right;
-
-        const d_totalres_text = top_total_row.getCell(end_res_col + 1);
-        d_totalres_text.value = "Итого:";
-        d_totalres_text.font = h_font;
-        d_totalres_text.font.size = font_size;
-        d_totalres_text.alignment = algn_right;
-
-        const d_totalres_val = top_total_row.getCell(end_res_col + 2);
-        d_totalres_val.value = {
-            formula: `SUM(${tres_sum_ltr}${headerRowInd + 1}:${tres_sum_ltr}${ind - 1})`
-        };
-        d_totalres_val.font = h_font;
-        d_totalres_val.font.size = font_size;
-        d_totalres_val.numFmt = n_format;
-        d_totalres_val.alignment = algn_right;
-
-        const d_totalvd_val = top_total_row.getCell(end_res_col + 3);
+        //  Дубликат итоговой суммы ВД
+        const d_totalvd_val = top_total_row.getCell(endMainTableCol + offset + 4);
         d_totalvd_val.value = {
             formula: `SUM(${tres_vd_ltr}${headerRowInd + 1}:${tres_vd_ltr}${ind - 1})`
         };
-        d_totalvd_val.font = h_font;
-        d_totalvd_val.font.size = font_size;
+        d_totalvd_val.font = { ...tabl_font };
         d_totalvd_val.numFmt = n_format;
         d_totalvd_val.alignment = algn_right;
+
+        //#endregion
+
+        //#region Таблица Операций
+
+        const operStartInd = worksheet.rowCount + 4;
+
+        const topTotalOperRow = worksheet.getRow(operStartInd);
+
+        //console.log(operStartInd);
+        //  Название таблицы материалов и фурнитуры
+        const oTableHeaderCell = topTotalOperRow.getCell(scol);
+        oTableHeaderCell.value = "Спецификация операций";
+        oTableHeaderCell.font = { ...tabl_font };
+        oTableHeaderCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        //#endregion
 
         //  Получаем номер последней строки, где есть данные
         //  Устанавливаем область печати: колонки A-scm, все строки с данными
@@ -1864,7 +1915,7 @@ async function main() {
             //  5. Формируем файлы спецификаций деталей
 
             //  6. Формируем файл Сметы проекта
-            //await createEsimateExcelFile(prj_array);
+            await createEsimateExcelFile(prj_array);
             //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);
