@@ -275,8 +275,8 @@ function findPanelHolesList(panel) {
                     depth: round(hole.Depth, 2),
                     diameter: hole.Radius * 2,
                     depth: round(hole.Depth, 1),
-                    type: typeHole,
-                    drillMode: hole.DrillMode,
+                    type: typeHole, //  1 в пласть, 2 торцевой
+                    drillMode: hole.DrillMode,  // 1 сквозное, 2 глухое
                     dirInPanel: dirInPanel,
                     positionInPanel: posInPanel
                 });
@@ -1135,7 +1135,8 @@ function setProjectEstimateData(db_data, prj) {
                     materialTkn: item.materialTkn,
                     area: 0,
                     contourLength: 0,
-                    drillInfo: []
+                    drillInfo: [],
+                    buttInfo: []
                 };
             };
             //  Площадь деталей и длина контуров деталей
@@ -1152,7 +1153,6 @@ function setProjectEstimateData(db_data, prj) {
                             d.depth === drill.depth &&
                             d.drillMode === drill.drillMode
                     );
-
                     if (existingDrill) {
                         // Увеличиваем счетчик
                         existingDrill.count += item.prjCount || 1;
@@ -1165,9 +1165,31 @@ function setProjectEstimateData(db_data, prj) {
                             drillMode: drill.drillMode,
                             count: item.prjCount || 1
                         });
-                    }
+                    };
                 });
-            }
+            };
+
+            //  Обработка кромки (данные с учетом свесов!!!)
+            if (item.buttInfo && Array.isArray(item.drillInfo)) {
+                item.buttInfo.forEach(butt => {
+                    // Ищем существующее кромки с такими же параметрами
+                    const existingButt = acc[key].buttInfo.find(
+                        b => b.thickness === butt.thickness &&
+                            b.width === butt.width
+                    );
+                    if (existingButt) {
+                        // Увеличиваем длину
+                        existingButt.length += butt.length;
+                    } else {
+                        // Добавляем новую кромку
+                        acc[key].buttInfo.push({
+                            thickness: butt.thickness,
+                            width: butt.width,
+                            length: butt.length
+                        });
+                    };
+                });
+            };
             return acc;
         }, {});
 
@@ -1548,7 +1570,8 @@ async function createEsimateExcelFile(prj_arr) {
         //  Шапка основной таблицы
         createHeaderRowTable(headerRow, headers, scol);
         //  Шапка вспомогательной таблицы
-        createHeaderRowTable(headerRow, v_headers, scol + headers.length + offset);
+        createHeaderRowTable(headerRow, v_headers,
+            scol + headers.length + offset);
 
         //  Индекс строки таблицы сразу после заголовка
         let ind = headerRowInd + 1;
@@ -1595,7 +1618,7 @@ async function createEsimateExcelFile(prj_arr) {
             //  Коэффициент наценки
             const k = c_koef[key] ? c_koef[key] : 0;
 
-            //  Цикл по массиву класса keyя
+            //  Цикл по массиву класса key
             for (let i = 0; i < items.length; i++) {
                 //  Объект материала
                 const item = items[i];
@@ -1830,15 +1853,257 @@ async function createEsimateExcelFile(prj_arr) {
         //#region Таблица Операций
 
         const operStartInd = worksheet.rowCount + 4;
-
         const topTotalOperRow = worksheet.getRow(operStartInd);
 
         //console.log(operStartInd);
         //  Название таблицы материалов и фурнитуры
-        const oTableHeaderCell = topTotalOperRow.getCell(scol);
-        oTableHeaderCell.value = "Спецификация операций";
-        oTableHeaderCell.font = { ...tabl_font };
-        oTableHeaderCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        const oTableNameCell = topTotalOperRow.getCell(scol);
+        oTableNameCell.value = "Спецификация операций";
+        oTableNameCell.font = { ...tabl_font };
+        oTableNameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        worksheet.getRow(operStartInd + 1).height = setRowHeght(5);
+        const oTableHeaderRow = worksheet.getRow(operStartInd + 2);
+
+        //  Шапка основной таблицы операций
+        createHeaderRowTable(oTableHeaderRow, headers, scol);
+        //  Шапка вспомогательной таблицы операций
+        createHeaderRowTable(oTableHeaderRow, v_headers,
+            scol + headers.length + offset);
+
+        //  Индекс строки таблицы сразу после заголовка
+        ind = operStartInd + 1;
+
+        //  Объект операций из файла настроек
+        const operations = settings.estimate.operations;
+
+        ind += 1;
+
+        classes.forEach(key => {
+            if (!estimate[key].items.length) return;
+
+            //  Исключенные классы материалов для раскроя
+            //  Не считается раскрой и не считается кромка
+            const exClasses = settings.estimate.excludeCuttingClasses;
+            const bool = !exClasses.includes(key);
+
+            //  Литеры колонок вспомогательной таблицы
+            // const v_col = scol + headers.length + offset
+            // const coef_ltr = getColumnLetter(v_col + 0);
+            // const price_ltr = getColumnLetter(v_col + 1);
+            // const sum_ltr = getColumnLetter(v_col + 2);
+            // const res_ltr = getColumnLetter(v_col + 3);
+
+            const items = estimate[key].items;
+
+            //  Игонорируем материалы, у которые есть свойство count
+            if (
+                !items.length ||
+                items[0].count ||       //  Игнорируем фурнитуру
+                items[0].length ||      //  Игнорируем кромку
+                !items[0].materialUnit  //  Игонорируем материалы не из базы
+            ) return;
+
+            //  Игнорируем мастериалы у которых нет данных о операциях
+            ind++;
+
+            //  Цикл по массиву класса key
+            for (let i = 0; i < items.length; i++) {
+                //  Объект материала
+                const item = items[i];
+                //  Надо добавить строчку с названием материала
+
+                //  Текущая строка
+                ind = ind + i;
+                const rn = ind; //  Индекс текущей строкиind + i
+                const row = worksheet.getRow(rn);
+
+                //  Стиль строки основной таблицы
+                setRowTableStyle(
+                    row,
+                    scol,
+                    scol + headers.length - 1
+                );
+
+                //  Стиль строки расчетной таблицы
+                setRowTableStyle(
+                    row,
+                    scol + headers.length + offset,
+                    scol + headers.length + offset + v_headers.length - 1
+                );
+
+                //  Литеры колонок цены и количества
+                const cpl = getColumnLetter(scol + 3);
+                const cvl = getColumnLetter(scol + 5);
+
+                //  Ячейка номера строки
+                const counterCell = row.getCell(scol + 0);
+                counterCell.value = "—";
+                counterCell.alignment = algn_right;
+
+                //  Ячейка артикула материала
+                const articleCell = row.getCell(scol + 1);
+                articleCell.value = item.materialArticle;
+                articleCell.alignment = algn_left;
+
+                //  Ячейка названия материала
+                const nameCell = row.getCell(scol + 2);
+                nameCell.value = item.materialName;
+                nameCell.alignment = algn_left;
+
+                //  Ячейка количества
+                const countCell = row.getCell(scol + 3);
+                countCell.alignment = algn_right;
+                countCell.value = "–";
+
+                //  Ячейка ед. изм.
+                const unitCell = row.getCell(scol + 4);
+                unitCell.value = "–";
+                unitCell.alignment = algn_center;
+
+                //  Ячейка цены
+                const priceCoeffCell = row.getCell(scol + 5);
+                priceCoeffCell.alignment = algn_right;
+                priceCoeffCell.value = "–";
+
+                //  Ячейка суммы
+                const coefSumCell = row.getCell(scol + 6);
+                coefSumCell.value = "–";
+                coefSumCell.alignment = algn_right;
+
+                //  Индикация строки материала
+                counterCell.fill = fill_blue;
+                articleCell.fill = fill_blue;
+                nameCell.fill = fill_blue;
+                countCell.fill = fill_blue;
+                unitCell.fill = fill_blue;
+                priceCoeffCell.fill = fill_blue;
+                coefSumCell.fill = fill_blue;
+
+                if (item.buttInfo && item.buttInfo.length > 0) {
+                    const buttArray = smartSort(item.buttInfo, [
+                        ["width", "asc"], ["thickness", "asc"]
+                    ]);
+
+                    buttArray.forEach(butt => {
+                        ind++;
+                        const bRow = worksheet.getRow(ind);
+                        //  Стиль строки основной таблицы
+                        setRowTableStyle(
+                            bRow,
+                            scol,
+                            scol + headers.length - 1
+                        );
+
+                        //  Стиль строки расчетной таблицы
+                        setRowTableStyle(
+                            bRow,
+                            scol + headers.length + offset,
+                            scol + headers.length + offset + v_headers.length - 1
+                        );
+
+                        //  Поиск цены отверстия
+
+                    });
+                };
+
+                //  Внутррений цикл по объекту drillInfo
+                if (item.drillInfo && item.drillInfo.length > 0) {
+                    const drillArray = smartSort(item.drillInfo, [
+                        ["type", "asc"], ["diameter", "desc"]
+                    ]);
+                    const drill = settings.estimate.operations.drill;
+                    drillArray.forEach(hole => {
+                        ind++;
+                        const dRow = worksheet.getRow(ind);
+                        //  Стиль строки основной таблицы
+                        setRowTableStyle(
+                            dRow,
+                            scol,
+                            scol + headers.length - 1
+                        );
+
+                        //  Стиль строки расчетной таблицы
+                        setRowTableStyle(
+                            dRow,
+                            scol + headers.length + offset,
+                            scol + headers.length + offset + v_headers.length - 1
+                        );
+
+                        //  Поиск цены отверстия
+                        let d = hole.diameter;
+                        let drillPrice = 0;
+                        for (let k = 0; k < drill.length; k++) {
+                            if (
+                                drill[k].type == hole.type &&
+                                drill[k].drillMode == hole.drillMode &&
+                                drill[k].diameters[d]
+                            ) {
+                                drillPrice = drill[k].diameters[d];
+                                break;
+                            };
+                        };
+
+                        let drillName = "";
+                        if (hole.type == 1 && hole.drillMode == 1) {
+                            //  Отверстие сквозное в пласть
+                            drillName =
+                                `Присадка сквозного отверстия в пласть D${d} мм`;
+                        } else if (hole.type == 1 && hole.drillMode == 2) {
+                            //  Отверстие глухое в пласть
+                            drillName =
+                                `Присадка глухого отверстия в пласть D${d}x${hole.depth} мм`;
+                            //  Отверстие в торец
+                        } else {
+                            drillName = `Присадка торцевого отверстия D${d}x${hole.depth} мм`;
+                        };
+
+                        //  Ячейка номера строки
+                        const dCounterCell = dRow.getCell(scol + 0);
+                        dCounterCell.alignment = algn_right;
+                        dCounterCell.value = "";
+
+                        //  Ячейка артикула материала
+                        const dArticleCell = dRow.getCell(scol + 1);
+                        dArticleCell.alignment = algn_left;
+                        dArticleCell.value = "";
+
+                        //  Ячейка названия материала
+                        const dNameCell = dRow.getCell(scol + 2);
+                        dNameCell.alignment = algn_left;
+                        dNameCell.value = drillName;
+
+                        //  Ячейка количества
+                        const dCountCell = dRow.getCell(scol + 3);
+                        dCountCell.alignment = algn_right;
+                        dCountCell.value = hole.count;
+
+                        //  Ячейка ед. изм.
+                        const dUnitCell = dRow.getCell(scol + 4);
+                        dUnitCell.alignment = algn_center;
+                        dUnitCell.value = "шт.";
+
+                        //  Ячейка цены
+                        const dPriceCoeffCell = dRow.getCell(scol + 5);
+                        dPriceCoeffCell.alignment = algn_right;
+                        dPriceCoeffCell.value = drillPrice;
+
+                        //  Ячейка суммы
+                        const dCoefSumCell = dRow.getCell(scol + 6);
+                        dCoefSumCell.alignment = algn_right;
+                        dCoefSumCell.value = "–";
+
+                        //ind++;
+                    });
+                };
+            };
+        });
+
+
+
+
+
+
 
         //#endregion
 
@@ -1897,6 +2162,8 @@ async function main() {
             // Обработка следующего файла
             Action.AsyncExec(processNextFile);
         } else {
+
+            Action.Hint = `получаем данные из Базы материалов...`;
             //  1. Получаем данные из Базы материалов
             let dbNames = await getDBMaterialInfo();
 
@@ -1915,6 +2182,7 @@ async function main() {
             //  5. Формируем файлы спецификаций деталей
 
             //  6. Формируем файл Сметы проекта
+            Action.Hint = `Сохраняем документы проекта...`;
             await createEsimateExcelFile(prj_array);
             //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
