@@ -108,81 +108,66 @@ function sanitizeFileName(name) {
         .substring(0, 200);
 };
 
-//  Функция последовательной сортировки массива объектов
-function smartSort(array, ...fields) {
-    // fields: ["field1", "asc"], ["field2", "desc"]
-    return [...array].sort((a, b) => {
-        for (let [field, order = 'asc'] of fields) {
-            if (a[field] < b[field]) return order === 'asc' ? -1 : 1;
-            if (a[field] > b[field]) return order === 'asc' ? 1 : -1;
+//  Функция сортировки массива по нескольким полям
+function smartSort(arr, options) {
+    if (!arr || !Array.isArray(arr)) return [];
+    if (!options || !Array.isArray(options) || options.length == 0) return arr;
+
+    function getNestedValue(obj, path) {
+        return path.split('.').reduce((item, key) => {
+            return item && item[key] !== undefined ? item[key] : undefined;
+        }, obj);
+    };
+
+    //   Сравнение значений разных типов
+    function compareValues(a, b, field) {
+        // Числа
+        if (typeof a === 'number' && typeof b === 'number') {
+            return a - b;
+        };
+
+        // Даты
+        if (a instanceof Date && b instanceof Date) {
+            return a.getTime() - b.getTime();
+        };
+
+        // Строки (регистронезависимое сравнение для строк)
+        if (typeof a === 'string' && typeof b === 'string') {
+            //return a.localeCompare(b, 'ru', { sensitivity: 'base' });
+            return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        };
+
+        // Разные типы или другие случаи
+        return String(a).localeCompare(String(b));
+    };
+
+    return [...arr].sort((a, b) => {
+        for (let [field, direction] of options) {
+
+            // Получаем значения для сравнения
+            let val_a = getNestedValue(a, field);
+            let val_b = getNestedValue(b, field);
+
+            // Обработка null/undefined
+            val_a = val_a ?? '';
+            val_b = val_b ?? '';
+
+            // Сравнение
+            let comparison = compareValues(val_a, val_b, field);
+
+            if (comparison !== 0) {
+                // Применяем направление сортировки
+                if (direction === 'desc' || direction === 'des') {
+                    return -comparison;
+                } else {
+                    return comparison
+                };
+            };
+            // Если равны, переходим к следующему критерию
         };
         return 0;
     });
 };
-// /**
-//  * Умная сортировка массива объектов по нескольким полям
-//  * @param {Array} array - массив объектов для сортировки
-//  * @param {Array} criteria - массив критериев сортировки [["поле", "направление"], ...]
-//  * @returns {Array} - отсортированный массив
-//  */
-// function smartSort(array, criteria) {
-//     if (!array || !Array.isArray(array)) return [];
-//     if (!criteria || !Array.isArray(criteria) || criteria.length === 0) return array;
-
-//     /**
-//      * Получение вложенного значения по пути (например, "user.name")
-//      */
-//     function getNestedValue(obj, path) {
-//         return path.split('.').reduce((current, key) => {
-//             return current && current[key] !== undefined ? current[key] : undefined;
-//         }, obj);
-//     };
-
-//     /**
-//      * Сравнение значений разных типов
-//      */
-//     function compareValues(a, b, field) {
-//         // Числа
-//         if (typeof a === 'number' && typeof b === 'number') {
-//             return a - b;
-//         };
-
-//         // Даты
-//         if (a instanceof Date && b instanceof Date) {
-//             return a.getTime() - b.getTime();
-//         };
-
-//         // Строки (регистронезависимое сравнение для строк)
-//         if (typeof a === 'string' && typeof b === 'string') {
-//             return a.localeCompare(b, 'ru', { sensitivity: 'base' });
-//         };
-
-//         // Разные типы или другие случаи
-//         return String(a).localeCompare(String(b));
-//     };
-
-//     return [...array].sort((a, b) => {
-//         for (let [field, direction] of criteria) {
-//             // Получаем значения для сравнения
-//             let valueA = getNestedValue(a, field);
-//             let valueB = getNestedValue(b, field);
-
-//             // Обработка null/undefined
-//             valueA = valueA ?? '';
-//             valueB = valueB ?? '';
-
-//             // Сравнение
-//             let comparison = compareValues(valueA, valueB, field);
-
-//             if (comparison !== 0) {
-//                 // Применяем направление сортировки
-//                 return direction === 'desc' ? -comparison : comparison;
-//             }
-//             // Если равны, переходим к следующему критерию
-//         }
-//         return 0;
-//     });
-// }
 
 // Функция поиска отверстий принадлежжащих панели
 function findPanelHolesList(panel) {
@@ -894,6 +879,26 @@ async function getDBMaterialInfo() {
             m.ID_M IN (${placeholders})
         `;
 
+        // //const placeholders = matnames.map(() => '?').join(',');
+
+        // //  1 строка запроса на получение данных материлов
+        // const sqlString = `
+        // SELECT
+        //     m.ID_M,
+        //     m.NAME_MAT,
+        //     m.PRICE,
+        //     m.SYNC_EXTERNAL,
+        //     ma.LENGTH,
+        //     ma.WIDTH,
+        //     ma.THICKNESS,
+        //     me.NAME_MEAS
+        // FROM MATERIAL AS m
+        //     LEFT JOIN MATERIAL_ADVANCE AS ma ON m.ID_M = ma.ID_M
+        //     LEFT JOIN MEASURE AS me ON m.ID_MS = me.ID_MS
+        // WHERE
+        //     m.ID_M IN (${placeholders})
+        // `;
+
         //  Запрос в БД
         const result_db = await executeQuery(sqlString2, options, resultIds);
 
@@ -1533,8 +1538,8 @@ async function createEsimateExcelFile(prj_arr) {
                 ];
             };
             //  Сортировка
-            //const items = smartSort(estimate[key].items, sort_options);
-            const items = estimate[key].items;
+            const items = smartSort(estimate[key].items, sort_options);
+            //const items = estimate[key].items;
 
             const k = c_koef[key] ? c_koef[key] : 0;
 
@@ -1591,7 +1596,7 @@ async function createEsimateExcelFile(prj_arr) {
                 const priceCoeffCell = row.getCell(scol + 5);
                 priceCoeffCell.alignment = algn_right;
                 priceCoeffCell.value = {
-                    formula: `${price_ltr}${rn}*${coef_ltr}${startRowInd}`
+                    formula: `${price_ltr}${rn}*$${coef_ltr}$${startRowInd}`
                 };
                 priceCoeffCell.numFmt = f_format;
 
