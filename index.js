@@ -175,8 +175,9 @@ function findPanelHolesList(panel) {
     //  Функция вычисления конечной точки отверстия
     function getHoleEndPoint(hole, fastener, panel) {
         // 1. Вычисляем конец отверстия в локальной системе фурнитуры
+        const k = 0.8; //   Коэффициент отступа от конечной точки
         const dir = hole.Direction;
-        const depth = hole.Depth;
+        const depth = hole.Depth * k;
 
         // Нормализуем направление (на случай если вектор не единичный)
         const len = Math.hypot(dir.x, dir.y, dir.z);
@@ -1121,12 +1122,38 @@ function setProjectEstimateData(db_data, prj) {
                     materilaHeight: item.materilaHeight,
                     materialTkn: item.materialTkn,
                     area: 0,
-                    contourLength: 0
+                    contourLength: 0,
+                    drillInfo: []
                 };
             };
             //  Площадь деталей и длина контуров деталей
             acc[key].area += item.area * item.prjCount || 0;
             acc[key].contourLength += item.contourLength * item.prjCount || 0;
+
+            // Обработка отверстий (присадки)
+            if (item.drillInfo && Array.isArray(item.drillInfo)) {
+                item.drillInfo.forEach(drill => {
+                    // Ищем существующее отверстие с такими же параметрами
+                    const existingDrill = acc[key].drillInfo.find(
+                        d => d.diameter === drill.diameter &&
+                            d.depth === drill.depth &&
+                            d.drillMode === drill.drillMode
+                    );
+
+                    if (existingDrill) {
+                        // Увеличиваем счетчик
+                        existingDrill.count += item.prjCount || 1;
+                    } else {
+                        // Добавляем новое отверстие
+                        acc[key].drillInfo.push({
+                            diameter: drill.diameter,
+                            depth: drill.depth,
+                            drillMode: drill.drillMode,
+                            count: item.prjCount || 1
+                        });
+                    }
+                });
+            }
             return acc;
         }, {});
 
@@ -1837,7 +1864,7 @@ async function main() {
             //  5. Формируем файлы спецификаций деталей
 
             //  6. Формируем файл Сметы проекта
-            await createEsimateExcelFile(prj_array);
+            //await createEsimateExcelFile(prj_array);
             //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);

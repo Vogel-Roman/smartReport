@@ -16,7 +16,7 @@ function main() {
     function getHoleEndPoint(hole, fastener, panel) {
         // 1. Вычисляем конец отверстия в локальной системе фурнитуры
         const dir = hole.Direction;
-        const depth = hole.Depth;
+        const depth = hole.Depth * 0.75;
 
         // Нормализуем направление (на случай если вектор не единичный)
         const len = Math.hypot(dir.x, dir.y, dir.z);
