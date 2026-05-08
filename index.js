@@ -1402,6 +1402,7 @@ async function createEsimateExcelFile(prj_arr) {
 
     //  Форматирование чисел
     const f_format = '#,##0.00';
+    const sf_format = '#,##0.0';
     const n_format = '# ##0';
 
     const algn_left = { indent: 1, horizontal: 'left', vertical: 'middle' };
@@ -1561,6 +1562,7 @@ async function createEsimateExcelFile(prj_arr) {
         //#endregion   
 
         //#region Таблица материалов и фурнитуры
+
         //  Название таблицы материалов и фурнитуры
         const mTableHeaderCell = top_total_row.getCell(scol);
         mTableHeaderCell.value = "Спецификация материалов и фурнитуры";
@@ -1852,10 +1854,9 @@ async function createEsimateExcelFile(prj_arr) {
 
         //#region Таблица Операций
 
-        const operStartInd = worksheet.rowCount + 4;
+        const operStartInd = worksheet.rowCount + 2;
         const topTotalOperRow = worksheet.getRow(operStartInd);
 
-        //console.log(operStartInd);
         //  Название таблицы материалов и фурнитуры
         const oTableNameCell = topTotalOperRow.getCell(scol);
         oTableNameCell.value = "Спецификация операций";
@@ -1911,7 +1912,13 @@ async function createEsimateExcelFile(prj_arr) {
             for (let i = 0; i < items.length; i++) {
                 //  Объект материала
                 const item = items[i];
-                //  Надо добавить строчку с названием материала
+                if (
+                    !item.buttInfo.length &&
+                    !item.drillInfo.length
+                ) {
+                    ind--;
+                    continue;
+                }
 
                 //  Текущая строка
                 ind = ind + i;
@@ -1954,22 +1961,42 @@ async function createEsimateExcelFile(prj_arr) {
                 //  Ячейка количества
                 const countCell = row.getCell(scol + 3);
                 countCell.alignment = algn_right;
-                countCell.value = "–";
+                countCell.value = "—";
 
                 //  Ячейка ед. изм.
                 const unitCell = row.getCell(scol + 4);
-                unitCell.value = "–";
+                unitCell.value = "—";
                 unitCell.alignment = algn_center;
 
                 //  Ячейка цены
                 const priceCoeffCell = row.getCell(scol + 5);
                 priceCoeffCell.alignment = algn_right;
-                priceCoeffCell.value = "–";
+                priceCoeffCell.value = "—";
 
                 //  Ячейка суммы
                 const coefSumCell = row.getCell(scol + 6);
-                coefSumCell.value = "–";
+                coefSumCell.value = "—";
                 coefSumCell.alignment = algn_right;
+
+                //  Коэффициент наценки класса
+                const coefCell = worksheet.getCell(`${coef_ltr}${ind}`);
+                coefCell.alignment = algn_center;
+                coefCell.value = "—";
+
+                //  Цена материала из базы
+                const dbPriceCell = worksheet.getCell(`${price_ltr}${ind}`);
+                dbPriceCell.alignment = algn_right;
+                dbPriceCell.value = "—";
+
+                //  Сумма материала из базы
+                const dbSumCell = worksheet.getCell(`${sum_ltr}${ind}`)
+                dbSumCell.alignment = algn_right;
+                dbSumCell.value = "—";
+
+                //  Разница между суммой с наценкой и без
+                const valCell = worksheet.getCell(`${res_ltr}${rn}`);
+                valCell.alignment = algn_right;
+                valCell.value = "—";
 
                 //  Индикация строки материала
                 counterCell.fill = fill_blue;
@@ -1979,12 +2006,125 @@ async function createEsimateExcelFile(prj_arr) {
                 unitCell.fill = fill_blue;
                 priceCoeffCell.fill = fill_blue;
                 coefSumCell.fill = fill_blue;
+                coefCell.fill = fill_blue;
+                dbPriceCell.fill = fill_blue;
+                dbSumCell.fill = fill_blue;
+                valCell.fill = fill_blue;
 
+                // console.log(item.materialName);
+                // console.log('-----------');
+
+                //  Операция раскроя
+                if (bool) {
+
+                    const cutting = settings.estimate.operations.cutting;
+                    let cuttingName = "Раскрой плиты";
+                    let ckf = 1;
+                    for (let k = 0; k < cutting.length; k++) {
+                        if (
+                            item.materialTkn > cutting[k].tkn[0] &&
+                            item.materialTkn <= cutting[k].tkn[1]
+                        ) {
+                            cuttingPrice = cutting[k].price;
+                            cuttingName += ` ${item.materialTkn} мм`;
+                            ckf = cutting[k].k;
+                            break;
+                        };
+                    };
+                    ind++;
+                    const cRow = worksheet.getRow(ind);
+                    //  Стиль строки основной таблицы
+                    setRowTableStyle(
+                        cRow,
+                        scol,
+                        scol + headers.length - 1
+                    );
+
+                    //  Стиль строки расчетной таблицы
+                    setRowTableStyle(
+                        cRow,
+                        scol + headers.length + offset,
+                        scol + headers.length + offset + v_headers.length - 1
+                    );
+
+                    //  Ячейка номера строки
+                    const cCounterCell = cRow.getCell(scol + 0);
+                    cCounterCell.alignment = algn_right;
+                    cCounterCell.value = "";
+
+                    //  Ячейка артикула материала
+                    const cArticleCell = cRow.getCell(scol + 1);
+                    cArticleCell.alignment = algn_left;
+                    cArticleCell.value = "";
+
+                    //  Ячейка названия материала
+                    const cNameCell = cRow.getCell(scol + 2);
+                    cNameCell.alignment = algn_left;
+                    cNameCell.value = cuttingName;
+
+                    //  Ячейка количества
+                    const cCountCell = cRow.getCell(scol + 3);
+                    cCountCell.alignment = algn_right;
+                    cCountCell.value = round(item.contourLength, 0);
+
+                    //  Ячейка ед. изм.
+                    const cUnitCell = cRow.getCell(scol + 4);
+                    cUnitCell.alignment = algn_center;
+                    cUnitCell.value = "м";
+
+                    //  Ячейка цены
+                    const cPriceCoeffCell = cRow.getCell(scol + 5);
+                    cPriceCoeffCell.alignment = algn_right;
+                    cPriceCoeffCell.value = {
+                        formula: `${price_ltr}${ind}*$${coef_ltr}$${ind}`
+                    };
+                    cPriceCoeffCell.numFmt = f_format;
+
+                    //  Ячейка суммы
+                    const cCoefSumCell = cRow.getCell(scol + 6);
+                    cCoefSumCell.alignment = algn_right;
+                    cCoefSumCell.value = {
+                        formula: `${cvl}${ind}*${cpl}${ind}`
+                    };
+                    cCoefSumCell.numFmt = f_format;
+
+                    //------------------------------------------------------------//
+
+                    //  Коэффициент наценки класса
+                    const coefCell = worksheet.getCell(`${coef_ltr}${ind}`);
+                    coefCell.alignment = algn_center;
+                    coefCell.value = ckf;
+                    coefCell.numFmt = f_format;
+                    coefCell.fill = fill_yellow;
+
+                    //  Цена материала из базы
+                    const dbPriceCell = worksheet.getCell(`${price_ltr}${ind}`);
+                    dbPriceCell.alignment = algn_right;
+                    dbPriceCell.value = cuttingPrice;
+                    dbPriceCell.numFmt = f_format;
+
+                    //  Сумма материала из базы
+                    const dbSumCell = worksheet.getCell(`${sum_ltr}${ind}`)
+                    dbSumCell.alignment = algn_right;
+                    dbSumCell.value = { formula: `${price_ltr}${ind}*${cpl}${ind}` };
+                    dbSumCell.numFmt = f_format;
+
+                    //  Разница между суммой с наценкой и без
+                    const valCell = worksheet.getCell(`${res_ltr}${ind}`);
+                    valCell.alignment = algn_right;
+                    valCell.value = {
+                        formula: `${cpl}${ind}*${cvl}${ind}-${sum_ltr}${ind}`
+                    };
+                    valCell.numFmt = f_format
+                    //------------------------------------------------------------//
+                };
+
+                //  Операции облицовки кромкой
                 if (item.buttInfo && item.buttInfo.length > 0) {
                     const buttArray = smartSort(item.buttInfo, [
                         ["width", "asc"], ["thickness", "asc"]
                     ]);
-
+                    const butts = settings.estimate.operations.butt;
                     buttArray.forEach(butt => {
                         ind++;
                         const bRow = worksheet.getRow(ind);
@@ -2002,12 +2142,99 @@ async function createEsimateExcelFile(prj_arr) {
                             scol + headers.length + offset + v_headers.length - 1
                         );
 
-                        //  Поиск цены отверстия
+                        //  Поиск цены кромки
+                        let kf = 1;
+                        let buttPrice = 0;
+                        let buttName = "Наклейка кромки";
+                        for (let k = 0; k < butts.length; k++) {
+                            if (
+                                butt.thickness > butts[k].tkn[0] &&
+                                butt.thickness <= butts[k].tkn[1] &&
+                                butt.width > butts[k].width[0] &&
+                                butt.width <= butts[k].width[1]
+                            ) {
+                                buttPrice = butts[k].price;
+                                buttName += ` ${butt.thickness}x${butt.width} мм`;
+                                kf = butts[k].k;
+                                break;
+                            };
+                        };
+
+                        //  Ячейка номера строки
+                        const bCounterCell = bRow.getCell(scol + 0);
+                        bCounterCell.alignment = algn_right;
+                        bCounterCell.value = "";
+
+                        //  Ячейка артикула материала
+                        const bArticleCell = bRow.getCell(scol + 1);
+                        bArticleCell.alignment = algn_left;
+                        bArticleCell.value = "";
+
+                        //  Ячейка названия материала
+                        const bNameCell = bRow.getCell(scol + 2);
+                        bNameCell.alignment = algn_left;
+                        bNameCell.value = buttName;
+
+                        //  Ячейка количества
+                        const bCountCell = bRow.getCell(scol + 3);
+                        bCountCell.alignment = algn_right;
+                        bCountCell.value = round(butt.length, 0);
+
+                        //  Ячейка ед. изм.
+                        const bUnitCell = bRow.getCell(scol + 4);
+                        bUnitCell.alignment = algn_center;
+                        bUnitCell.value = "м";
+
+                        //  Ячейка цены
+                        const bPriceCoeffCell = bRow.getCell(scol + 5);
+                        bPriceCoeffCell.alignment = algn_right;
+                        bPriceCoeffCell.value = {
+                            formula: `${price_ltr}${ind}*$${coef_ltr}$${ind}`
+                        };
+                        bPriceCoeffCell.numFmt = f_format;
+
+                        //  Ячейка суммы
+                        const dCoefSumCell = bRow.getCell(scol + 6);
+                        dCoefSumCell.alignment = algn_right;
+                        dCoefSumCell.value = {
+                            formula: `${cvl}${ind}*${cpl}${ind}`
+                        };
+                        dCoefSumCell.numFmt = f_format;
+
+                        //------------------------------------------------------------//
+
+                        //  Коэффициент наценки класса
+                        const coefCell = worksheet.getCell(`${coef_ltr}${ind}`);
+                        coefCell.alignment = algn_center;
+                        coefCell.value = kf;
+                        coefCell.numFmt = f_format;
+                        coefCell.fill = fill_yellow;
+
+                        //  Цена материала из базы
+                        const dbPriceCell = worksheet.getCell(`${price_ltr}${ind}`);
+                        dbPriceCell.alignment = algn_right;
+                        dbPriceCell.value = buttPrice;
+                        dbPriceCell.numFmt = f_format;
+
+                        //  Сумма материала из базы
+                        const dbSumCell = worksheet.getCell(`${sum_ltr}${ind}`)
+                        dbSumCell.alignment = algn_right;
+                        dbSumCell.value = { formula: `${price_ltr}${ind}*${cpl}${ind}` };
+                        dbSumCell.numFmt = f_format;
+
+                        //  Разница между суммой с наценкой и без
+                        const valCell = worksheet.getCell(`${res_ltr}${ind}`);
+                        valCell.alignment = algn_right;
+                        valCell.value = {
+                            formula: `${cpl}${ind}*${cvl}${ind}-${sum_ltr}${ind}`
+                        };
+                        valCell.numFmt = f_format
+                        //------------------------------------------------------------//
 
                     });
                 };
 
-                //  Внутррений цикл по объекту drillInfo
+                //  Операции присадки
                 if (item.drillInfo && item.drillInfo.length > 0) {
                     const drillArray = smartSort(item.drillInfo, [
                         ["type", "asc"], ["diameter", "desc"]
@@ -2033,6 +2260,7 @@ async function createEsimateExcelFile(prj_arr) {
                         //  Поиск цены отверстия
                         let d = hole.diameter;
                         let drillPrice = 0;
+                        let kf = 1;
                         for (let k = 0; k < drill.length; k++) {
                             if (
                                 drill[k].type == hole.type &&
@@ -2040,6 +2268,7 @@ async function createEsimateExcelFile(prj_arr) {
                                 drill[k].diameters[d]
                             ) {
                                 drillPrice = drill[k].diameters[d];
+                                kf = drill[k].k;
                                 break;
                             };
                         };
@@ -2086,24 +2315,165 @@ async function createEsimateExcelFile(prj_arr) {
                         //  Ячейка цены
                         const dPriceCoeffCell = dRow.getCell(scol + 5);
                         dPriceCoeffCell.alignment = algn_right;
-                        dPriceCoeffCell.value = drillPrice;
+                        dPriceCoeffCell.value = {
+                            formula: `${price_ltr}${ind}*$${coef_ltr}$${ind}`
+                        };
+                        dPriceCoeffCell.numFmt = f_format;
 
                         //  Ячейка суммы
                         const dCoefSumCell = dRow.getCell(scol + 6);
                         dCoefSumCell.alignment = algn_right;
-                        dCoefSumCell.value = "–";
+                        dCoefSumCell.value = {
+                            formula: `${cvl}${ind}*${cpl}${ind}`
+                        };;
+                        dCoefSumCell.numFmt = f_format;
 
-                        //ind++;
+                        //------------------------------------------------------------//
+
+                        //  Коэффициент наценки класса
+                        const coefCell = worksheet.getCell(`${coef_ltr}${ind}`);
+                        coefCell.alignment = algn_center;
+                        coefCell.value = kf;
+                        coefCell.numFmt = f_format;
+                        coefCell.fill = fill_yellow;
+
+                        //  Цена материала из базы
+                        const dbPriceCell = worksheet.getCell(`${price_ltr}${ind}`);
+                        dbPriceCell.alignment = algn_right;
+                        dbPriceCell.value = drillPrice;
+                        dbPriceCell.numFmt = f_format;
+
+                        //  Сумма материала из базы
+                        const dbSumCell = worksheet.getCell(`${sum_ltr}${ind}`)
+                        dbSumCell.alignment = algn_right;
+                        dbSumCell.value = { formula: `${price_ltr}${ind}*${cpl}${ind}` };
+                        dbSumCell.numFmt = f_format;
+
+                        //  Разница между суммой с наценкой и без
+                        const valCell = worksheet.getCell(`${res_ltr}${ind}`);
+                        valCell.alignment = algn_right;
+                        valCell.value = {
+                            formula: `${cpl}${ind}*${cvl}${ind}-${sum_ltr}${ind}`
+                        };
+                        valCell.numFmt = f_format
+                        //------------------------------------------------------------//
+
                     });
                 };
             };
         });
 
+        ind++;
+        const oRow = worksheet.getRow(ind);
 
+        // const end_res_col = scol + headers.length;
+        // const endMainTableCol = scol + headers.length - 1;
 
+        //  Стиль строки основной таблицы
+        setEndRowTableStyle(
+            oRow,
+            scol,
+            scol + headers.length - 1
+        );
 
+        //  Стиль строки расчетной таблицы
+        setEndRowTableStyle(
+            oRow,
+            scol + headers.length + offset,
+            scol + headers.length + offset + v_headers.length - 1
+        );
 
+        // //  Литера колонки Суммы основнйо таблицы
+        // const tsm_ltr = getColumnLetter(endMainTableCol);  // H
+        // const tres_sum_ltr = getColumnLetter(endMainTableCol + offset + 3);
+        // const tres_vd_ltr = getColumnLetter(endMainTableCol + offset + 4);
 
+        //  --- Основная таблица
+        //  текст ИТОГО основной таблицы
+        const o_total_row_text = oRow.getCell(endMainTableCol - 1);//scol + 5
+        o_total_row_text.value = "Итого:";
+        o_total_row_text.font.size = font_size;
+        o_total_row_text.alignment = algn_right;
+        o_total_row_text.border = {
+            left: { style: 'none' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
+        };
+        //  Дубликат в шапке таблицы текста ИТОГО
+        const o_d_total_text = topTotalOperRow.getCell(endMainTableCol - 1);
+        o_d_total_text.value = o_total_row_text.value;
+        o_d_total_text.font = { ...tabl_font };
+        o_d_total_text.alignment = algn_right;
+
+        //  Дубликат суммы в шапке таблицы
+        const o_d_total_val = topTotalOperRow.getCell(endMainTableCol);
+        o_d_total_val.value = {
+            formula: `SUM(${tsm_ltr}${operStartInd + 1}:${tsm_ltr}${ind - 1})`
+        };
+        o_d_total_val.font = { ...tabl_font };
+        o_d_total_val.numFmt = n_format;
+        o_d_total_val.alignment = algn_right;
+
+        //  Ячейка итоговой суммы с наценкой
+        const o_total_row_val = oRow.getCell(endMainTableCol);
+        o_total_row_val.value = {
+            formula: `SUM(${tsm_ltr}${operStartInd + 1}:${tsm_ltr}${ind - 1})`
+        };
+        o_total_row_val.numFmt = n_format;
+        o_total_row_val.alignment = algn_right;
+
+        //  --- Вспомогательная таблица
+        //  Текст ИТОГО вспомогательной таблицы
+        const o_total_row_res_text = oRow.getCell(endMainTableCol + offset + 2);
+        o_total_row_res_text.value = "Итого:";
+        o_total_row_res_text.font.size = font_size;
+        o_total_row_res_text.alignment = algn_right;
+        o_total_row_res_text.border = {
+            left: { style: 'none' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
+        };
+        //  Дубликат в шапке вспомогательной таблицы текста ИТОГО
+        const o_d_totalres_text = topTotalOperRow.getCell(endMainTableCol + offset + 2);
+        o_d_totalres_text.value = o_total_row_res_text.value;
+        o_d_totalres_text.font = { ...tabl_font };
+        o_d_totalres_text.alignment = algn_right;
+
+        //  Ячейка итоговой суммы из Базы
+        const o_total_row_res_val = oRow.getCell(endMainTableCol + offset + 3);
+        o_total_row_res_val.value = {
+            formula: `SUM(${tres_sum_ltr}${operStartInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        o_total_row_res_val.numFmt = n_format;
+        o_total_row_res_val.alignment = algn_right;
+        o_total_row_res_val.border = {
+            left: { style: 'thin' }, right: { style: 'thin' },
+            top: { style: 'medium' }, bottom: { style: 'medium' }
+        };
+
+        //  Дубликат суммы из базы в шапке таблицы
+        const o_d_totalres_val = topTotalOperRow.getCell(endMainTableCol + offset + 3);
+        o_d_totalres_val.value = {
+            formula: `SUM(${tres_sum_ltr}${operStartInd + 1}:${tres_sum_ltr}${ind - 1})`
+        };
+        o_d_totalres_val.font = { ...tabl_font };
+        o_d_totalres_val.numFmt = n_format;
+        o_d_totalres_val.alignment = algn_right;
+
+        //  Ячейка итоговой суммы ВД
+        const o_total_row_res_vd_val = oRow.getCell(endMainTableCol + offset + 4);
+        o_total_row_res_vd_val.value = {
+            formula: `SUM(${tres_vd_ltr}${operStartInd + 1}:${tres_vd_ltr}${ind - 1})`
+        };
+        o_total_row_res_vd_val.numFmt = n_format;
+        o_total_row_res_vd_val.alignment = algn_right;
+
+        //  Дубликат итоговой суммы ВД
+        const o_d_totalvd_val = topTotalOperRow.getCell(endMainTableCol + offset + 4);
+        o_d_totalvd_val.value = {
+            formula: `SUM(${tres_vd_ltr}${operStartInd + 1}:${tres_vd_ltr}${ind - 1})`
+        };
+        o_d_totalvd_val.font = { ...tabl_font };
+        o_d_totalvd_val.numFmt = n_format;
+        o_d_totalvd_val.alignment = algn_right;
 
         //#endregion
 
