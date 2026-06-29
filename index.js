@@ -2490,6 +2490,13 @@ async function createEsimateExcelFile(prj_arr) {
     await workbook.xlsx.writeFile(filePath);
 };
 
+//  Функция создания спецификации для загрузки в 1С
+async function createSpecificationFor1C(prj_arr) {
+
+    console.log(prj_arr.length);
+
+};
+
 //#endregion
 
 /****************************** ОСНОВНАЯ ФУНКЦИЯ ******************************/
@@ -2501,7 +2508,7 @@ async function main() {
     let prj_array = readProjectFilesData(PROJECT_FILE);
 
     //  Функция рекурсивного обхода массива файлов Проекта
-    async function processNextFile() {
+    async function proccessNextFile() {
         //  Путь до текущего файла проекта
         const filepath = prj_array[ind].filepath;
 
@@ -2530,7 +2537,7 @@ async function main() {
         ind++;
         if (ind < prj_array.length) {
             // Обработка следующего файла
-            Action.AsyncExec(processNextFile);
+            Action.AsyncExec(proccessNextFile);
         } else {
 
             Action.Hint = `получаем данные из Базы материалов...`;
@@ -2554,6 +2561,11 @@ async function main() {
             //  6. Формируем файл Сметы проекта
             Action.Hint = `Сохраняем документы проекта...`;
             await createEsimateExcelFile(prj_array);
+
+            //  7. Формирование файла спецификации проекта
+            Action.Hint = `Сохраняем спецификацию для загрузки в 1С...`;
+            await createSpecificationFor1C(prj_array);
+
             //  Завершение обработки (выход из скрипта)
             //console.log(JSON.stringify(prj_array, null, 2));
             console.log(`Обработано ${count} файлов из ${prj_array.length}`);
@@ -2562,7 +2574,7 @@ async function main() {
     };
 
     //  Запуск функции рекурсивного обхода файлов Проекта
-    if (prj_array.length > 0) processNextFile();
+    if (prj_array.length > 0) proccessNextFile();
 
     //console.log(JSON.stringify(prj_array, null, 2));
     //Action.Finish();
