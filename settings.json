@@ -13,6 +13,7 @@
     },
     "author": "Роман Багаев",
     "estimate": {
+        "useCoefficient": false,
         "classes": {
             "FSD1": 1.85,
             "FSD2": 1.85,
