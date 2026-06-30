@@ -642,7 +642,7 @@ function panelProcessing(panel, modelData) {
         materialPrice: 0,               //  Цена из базы данных (DB)
         materialUnit: "",               //  Единица измерения (DB)
         materialWidth: 0,               //  Длина листа (DB) мм
-        materilaHeight: 0,              //  Ширина листа (DB) мм
+        materialHeight: 0,              //  Ширина листа (DB) мм
         materialTkn: panel.Thickness,   //  Толщина материала
         prjCount: modelData.count,      //  Количество
         pos: panel.ArtPos,              //  Позиция в модели
@@ -689,7 +689,7 @@ function panelProcessing(panel, modelData) {
             materialPrice: 0,               //  Цена из базы данных (DB)
             materialUnit: "",               //  Единица измерения (DB)
             materialWidth: 0,               //  Длина листа (DB) мм
-            materilaHeight: 0,              //  Ширина листа (DB) мм
+            materialHeight: 0,              //  Ширина листа (DB) мм
             materialTkn: pls.tkn,           //  Толщина материала
             prjCount: modelData.count,      //  Количество
             pos: panel.ArtPos + pls.ltr,    //  Позиция в модели
@@ -977,7 +977,7 @@ async function unionMaterialData(prj_arr, mat_arr) {
                 pnl.materialUnit = pnl_m.name_meas;
                 pnl.materialPrice = pnl_m.price;
                 pnl.materialWidth = pnl_m.length;
-                pnl.materilaHeight = pnl_m.width;
+                pnl.materialHeight = pnl_m.width;
             } else {
                 pnl.materialID = pnl.materialName;
             };
@@ -1006,7 +1006,7 @@ async function unionMaterialData(prj_arr, mat_arr) {
                 prfl.materialUnit = prfl_m.name_meas;
                 prfl.materialPrice = prfl_m.price;
                 prfl.materialWidth = prfl_m.length;
-                prfl.materilaHeight = prfl_m.width;
+                prfl.materialHeight = prfl_m.width;
             } else {
                 prfl.materialID = prfl.materialName;
             };
@@ -1137,7 +1137,7 @@ function setProjectEstimateData(db_data, prj) {
                     materialPrice: item.materialPrice,
                     materialUnit: item.materialUnit,
                     materialWidth: item.materialWidth,
-                    materilaHeight: item.materilaHeight,
+                    materialHeight: item.materialHeight,
                     materialTkn: item.materialTkn,
                     area: 0,
                     contourLength: 0,
@@ -1350,6 +1350,11 @@ function aggregateMaterials(prj_arr) {
                         quantity: quantity,
                         class: className // Сохраняем класс материала
                     };
+
+                    if (material.area !== undefined) {
+                        newItem.materialWidth = material.materialWidth;
+                        newItem.materialHeight = material.materialHeight;
+                    }
 
                     // Добавляем в массив результатов
                     result.push(newItem);
@@ -2466,11 +2471,9 @@ async function createEsimateExcelFile(prj_arr) {
 //  Функция создания спецификации для загрузки в 1С
 async function createSpecificationForImport(materials_data) {
 
-    console.log('Сводная таблица материалов:');
     const materials = materials_data;
 
     //#region Настройки стилей
-
     if (!settings.estimate.classes)
         errFinish("Ошибка файла настроек - classes");
     if (!settings.estimate.fillColor)
@@ -2485,7 +2488,6 @@ async function createSpecificationForImport(materials_data) {
     const tabl_font = { name: fontFamily, size: font_size + 2, bold: true };
     const h_font = { name: fontFamily, size: font_size, bold: true };
     const r_font = { name: fontFamily, size: font_size - 1, bold: false };
-
     const c_koef = settings.estimate.classes;
     const fill = settings.estimate.fillColor;
 
@@ -2566,7 +2568,6 @@ async function createSpecificationForImport(materials_data) {
     for (let i = 0; i < headers.length; i++) {
         headerRow.getCell(startColInd + i).value = headers[i];
     };
-    //createHeaderRowTable(headerRow, headers, startColInd);
 
     //  Стилизация шапки таблицы
     setRowTableStyle(
@@ -2583,8 +2584,6 @@ async function createSpecificationForImport(materials_data) {
     //  Построение тела таблицы
     for (let i = 0; i < materials.length; i++) {
         const item = materials[i];
-
-        //  Текущая строка
         const row = worksheet.getRow(startRowInd + 1 + i);
 
         //  Ячейка кода номенклатуры
@@ -2634,7 +2633,6 @@ async function createSpecificationForImport(materials_data) {
                 r_font              //  Стиль шрифта
             );
         };
-
         index++;
     };
 
@@ -2644,11 +2642,9 @@ async function createSpecificationForImport(materials_data) {
     )}.xlsx`;
     const filePath = path.join(FOLDER, fileName);
     await workbook.xlsx.writeFile(filePath);
-
 };
 
 //=== Стлизация таблиц =======================================================//
-
 //  Функция стилизации строк таблицы
 function setRowTableStyle(row, start, tclmns, rh, r_type = 'main', font_style) {
     const a = start;            //  Начальная колонка таблицы
@@ -2740,12 +2736,10 @@ function styleCellRange(row, a, b, styles) {
 function setRowHeght(num) {
     return Math.round(num / 0.75 * 10) / 10;
 };
-
 //============================================================================//
 
 //#endregion
 
-/****************************** ОСНОВНАЯ ФУНКЦИЯ ******************************/
 async function main() {
 
     let ind = 0;    //  Индекс файла Проекта
