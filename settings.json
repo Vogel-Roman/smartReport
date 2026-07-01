@@ -12,8 +12,9 @@
         "pageSize": 4096
     },
     "author": "Роман Багаев",
+    "reportFolderName": "SmartWood Отчеты проекта",
     "estimate": {
-        "useCoefficient": false,
+        "useCoefficient": true,
         "classes": {
             "FSD1": 1.85,
             "FSD2": 1.85,

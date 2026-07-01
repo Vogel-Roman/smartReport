@@ -1,4 +1,4 @@
-/******************************************************************************/
+﻿/******************************************************************************/
 /***       Скрипт на формирование отчетов из Проектов Базис в Excel         ***/
 /***                         SmartWood Reports v1.0                         ***/
 /******************************************************************************/
@@ -39,6 +39,9 @@ if (!checkSettingsData(settings_data))
 
 //  Данные настроек внешнего файла
 const settings = JSON.parse(settings_data);
+
+//  Директория сохранения отчетов
+const SW_FOLDER = settings.reportFolderName;
 
 //  Классы группировки данных
 const defClass = "M0";
@@ -1279,13 +1282,12 @@ function setProjectEstimateData(db_data, prj) {
 
 // Функция для агрегации материалов из массива prj_arr
 function aggregateMaterials(prj_arr) {
-    // Результирующий массив (сводная таблица)
-    const result = [];
+    // Результирующий объект с группировкой по классам
+    const result = {};
 
-    // Объект для быстрого поиска существующих материалов
-    // Ключ: уникальный идентификатор материала (material + class)
-    // Значение: ссылка на объект в result
-    const materialMap = new Map();
+    // Объект для хранения Map по каждому классу
+    // Ключ: className, Значение: Map для быстрого поиска материалов в этом классе
+    const classMaps = {};
 
     // Проходим по всем элементам проекта
     for (const projectItem of prj_arr) {
@@ -1305,12 +1307,16 @@ function aggregateMaterials(prj_arr) {
             // Проверяем наличие массива items
             if (!classData || !Array.isArray(classData.items)) continue;
 
+            // Инициализируем структуру для класса, если её ещё нет
+            if (!result[className]) {
+                result[className] = { items: [] };
+                classMaps[className] = new Map();
+            }
+
             // Проходим по всем материалам в текущем классе
             for (const material of classData.items) {
                 // Проверяем наличие обязательных полей
-                if (!material.material) {
-                    continue; // Пропускаем материал без идентификатора
-                }
+                if (!material.material) continue;
 
                 // Определяем, какое количество использовать
                 let quantity = 0;
@@ -1327,21 +1333,33 @@ function aggregateMaterials(prj_arr) {
                     quantityType = 'count';
                 } else {
                     continue;
-                };
+                }
 
-                // Создаем уникальный ключ для поиска в мапе
-                // Комбинируем material и className для уникальности
-                const uniqueKey = `${material.material}_${className}`;
+                // Создаем уникальный ключ для поиска в мапе конкретного класса
+                // Для area используем material, для остальных - material
+                const uniqueKey = material.material;
 
-                // Проверяем, существует ли уже такой материал в результате
-                if (materialMap.has(uniqueKey)) {
+                // Проверяем, существует ли уже такой материал в этом классе
+                if (classMaps[className].has(uniqueKey)) {
                     // Если существует - добавляем количество
-                    const existingItem = materialMap.get(uniqueKey);
+                    const existingItem = classMaps[className].get(uniqueKey);
                     existingItem.quantity += quantity;
+
+                    // Обновляем дублирующее поле (area/length/count)
+                    if (quantityType === 'area') {
+                        existingItem.area = (existingItem.area || 0) + quantity;
+                    } else if (quantityType === 'length') {
+                        existingItem.length = (existingItem.length || 0) + quantity;
+                    } else if (quantityType === 'count') {
+                        existingItem.count = (existingItem.count || 0) + quantity;
+                    }
                 } else {
-                    const k = material.area !== undefined ?
-                        1 / (material.materialHeight * material.materialWidth * 0.000001) : 1;
-                    // Если не существует - создаем новый объект
+                    // Вычисляем коэффициент k (если есть area)
+                    const k = material.area !== undefined && material.materialWidth && material.materialHeight
+                        ? 1 / (material.materialHeight * material.materialWidth * 0.000001)
+                        : 1;
+
+                    // Создаем новый объект материала
                     const newItem = {
                         material: material.material,
                         materialName: material.materialName || '',
@@ -1351,25 +1369,31 @@ function aggregateMaterials(prj_arr) {
                         materialPrice: material.materialPrice || 0,
                         quantityType: quantityType,
                         quantity: quantity,
-                        k: k,
-                        class: className // Сохраняем класс материала
+                        k: k
                     };
 
-                    if (material.area !== undefined) {
-                        newItem.materialWidth = material.materialWidth;
-                        newItem.materialHeight = material.materialHeight;
+                    // Добавляем специфичные поля в зависимости от типа количества
+                    if (quantityType === 'area') {
+                        newItem.materialWidth = material.materialWidth || 0;
+                        newItem.materialHeight = material.materialHeight || 0;
+                        newItem.area = quantity;
+                    } else if (quantityType === 'length') {
+                        newItem.length = quantity;
+                    } else if (quantityType === 'count') {
+                        newItem.count = quantity;
                     }
 
-                    // Добавляем в массив результатов
-                    result.push(newItem);
+                    // Добавляем в массив items для этого класса
+                    result[className].items.push(newItem);
                     // Сохраняем в мапу для быстрого доступа
-                    materialMap.set(uniqueKey, newItem);
+                    classMaps[className].set(uniqueKey, newItem);
                 }
             }
         }
     }
+
     return result;
-};
+}
 
 //#endregion
 
@@ -2465,183 +2489,215 @@ async function createEsimateExcelFile(prj_arr) {
     const fileName = `${sanitizeFileName(
         PROJECT_NAME + "_Калькуляция проекта"
     )}.xlsx`;
-    const filePath = path.join(FOLDER, fileName);
+
+    // Проверяем/создаем директорию
+    const RF = path.join(FOLDER, SW_FOLDER);
+    if (!fs.existsSync(RF)) fs.mkdirSync(RF, { recursive: true });
+    const filePath = path.join(RF, fileName);
     await workbook.xlsx.writeFile(filePath);
 };
 
 //  Функция создания спецификации для загрузки в 1С
 async function createSpecificationForImport(materials_data) {
-
-    const materials = materials_data;
-
-    //#region Настройки стилей
+    //#region Проверка настроек
     if (!settings.estimate.classes)
         errFinish("Ошибка файла настроек - classes");
     if (!settings.estimate.fillColor)
         errFinish("Ошибка файла настроек - fillColor");
+    //#endregion
 
-    const fontFamily = settings.estimate.fontFamily ?
-        settings.estimate.fontFamily : "Arial";
-
-    const row_height = 14;
+    //#region Настройки стилей
+    const fontFamily = settings.estimate.fontFamily || "Arial";
+    const rh = 14;
     const font_size = 9;
-    const doc_font = { name: fontFamily, size: font_size + 7, bold: true };
-    const tabl_font = { name: fontFamily, size: font_size + 2, bold: true };
     const h_font = { name: fontFamily, size: font_size, bold: true };
     const r_font = { name: fontFamily, size: font_size - 1, bold: false };
-    const c_koef = settings.estimate.classes;
     const fill = settings.estimate.fillColor;
 
-    //  Заливка ячеек
-    const fill_green = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: fill.green }
-    };
+    // Заливка ячеек
     const fill_yellow = {
         type: 'pattern', pattern: 'solid',
         fgColor: { argb: fill.yellow }
     };
-    const fill_orange = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: fill.orange }
-    };
-    const fill_red = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: fill.red }
-    };
-    const fill_blue = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: fill.blue }
-    };
 
-    //  Форматирование чисел
+    // Форматирование чисел
     const f_format = '#,##0.00';
-    const sf_format = '#,##0.0';
     const n_format = '# ##0';
 
     const algnLeft = { indent: 1, horizontal: 'left', vertical: 'middle' };
     const algnRight = { indent: 1, horizontal: 'right', vertical: 'middle' };
     const algnCenter = { horizontal: 'center', vertical: 'middle' };
-
     //#endregion
 
-    //  Создаем файл спецификации
-    const workbook = new ExcelJS.Workbook();    //  Новая книга
-    workbook.creator = settings.author;         //  Автор
-    workbook.created = new Date();              //  Дата документа
+    // Создаем файл спецификации
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = settings.author;
+    workbook.created = new Date();
 
-    //  Создание и настройка страницы
+    // Создание и настройка страницы
     const worksheet = workbook.addWorksheet('Спецификация');
     worksheet.pageSetup = {
-        orientation: 'portrait',    // 'portrait' | 'landscape'
-        margins: {                  // Поля страницы в дюймах (1д = 2.54см)
-            top: 0.5,               // Верхнее поле
-            bottom: 0.5,            // Нижнее поле
-            left: 0.39,             // Левое поле
-            right: 0.39,            // Правое поле
-            header: 0.3,            // Отступ для колонтитула сверху
-            footer: 0.3             // Отступ для колонтитула снизу
+        orientation: 'portrait',
+        margins: {
+            top: 0.5,
+            bottom: 0.5,
+            left: 0.39,
+            right: 0.39,
+            header: 0.3,
+            footer: 0.3
         },
-        // Масштабирование
-        fitToPage: true,            // Вписать в страницу
-        fitToWidth: 1,              // Вписать по ширине (1 страница)
-        fitToHeight: 0,             // По высоте (0 = автоматически)
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
     };
 
-    // Колонки таблицы
+    // Колонки таблицы (только те, что нужны для 1С)
     worksheet.columns = [
-        { width: 14 },      //  Код             (materialSyncExternal) 
-        { width: 18 },      //  Артикул         (materialArticle) 
-        { width: 75 },      //  Наименование    (materialName)
-        { width: 20 },      //  Количество      (quantity)
-        { width: 14 },      //  Ед.             (materialUnit)
+        { width: 12 },      // Код (materialSyncExternal)
+        { width: 20 },      // Артикул (materialArticle)
+        { width: 75 },      // Наименование (materialName)
+        { width: 12 },      // Количество (quantity)
+        { width: 20 },      // Ед. (materialUnit)
     ];
 
     //  Заголовки колонок таблицы
     const startRowInd = 1;
     const startColInd = 1;
-    const headers = [
-        'Код', 'Артикул', 'Номенклатура', 'Единица измерения', 'Количество'
-    ];
+    const headers = ['Код', 'Артикул', 'Номенклатура', 'Количество', 'Единица измерения'];
+
+    // Добавляем заголовки колонок (одна строка)
     const headerRow = worksheet.getRow(startRowInd);
     headerRow.alignment = algnCenter;
+    headerRow.height = rh;
 
     for (let i = 0; i < headers.length; i++) {
         headerRow.getCell(startColInd + i).value = headers[i];
     };
-
-    //  Стилизация шапки таблицы
     setRowTableStyle(
-        headerRow,          //  Строка
-        startColInd,        //  Начало диапазона ячеек строки
-        headers.length,     //  Конец диапазона ячеек строки
-        row_height,         //  Высота строки
-        'header',           //  Тип строки
-        h_font              //  Стиль шрифта
+        headerRow,
+        startColInd,
+        headers.length,
+        rh,
+        'header',
+        h_font
     );
+    //  Индекс строки таблицы сразу после заголовка
+    let ind = startRowInd + 1;
 
-    let index = 0;
+    // Проходим по классам и заполняем таблицу
+    classes.forEach(key => {
+        if (!materials_data[key].items.length) return;
 
-    //  Построение тела таблицы
-    for (let i = 0; i < materials.length; i++) {
-        const item = materials[i];
-        const row = worksheet.getRow(startRowInd + 1 + i);
+        //  Сортировка материалов в пределах класса
+        let sort_options = [["materialName", "desc"]];
+        if (materials_data[key].items[0].area) {
+            // Площадной материалв
+            sort_options = [
+                ["materialTkn", "desc"], ["materialName", "asc"]
+            ];
+        } else if (materials_data[key].items[0].length) {
+            //  Кромка или погонный материал
+            sort_options = [
+                ["materialName", "desc"]
+            ];
+        } else if (materials_data[key].items[0].count) {
+            //  Фурнитура
+            sort_options = [
+                ["materialName", "desc"]
+            ];
+        };
 
-        //  Ячейка кода номенклатуры
-        const codeCell = row.getCell(startColInd);
-        codeCell.value = item.materialSyncExternal;
-        if (!codeCell.value) codeCell.fill = fill_orange;
-        codeCell.alignment = algnLeft;
+        // Сортируем материалы в классе
+        const items = smartSort(materials_data[key].items, sort_options);
 
-        //  Ячека артикула материала
-        const articleCell = row.getCell(startColInd + 1);
-        articleCell.value = item.materialArticle;
-        articleCell.alignment = algnLeft;
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const row = worksheet.getRow(ind + i);
 
-        //  Ячейка названия номенклатуры
-        const materialCell = row.getCell(startColInd + 2);
-        materialCell.value = item.materialName;
-        materialCell.alignment = algnLeft;
+            //  Количество
+            let unit = item.materialUnit;
+            let price = item.materialPrice;
+            let quantity = 0;
+            if (item.area) {
+                quantity = item.area;
+            } else if (item.length) {
+                quantity = item.length;
+            } else if (item.count) {
+                quantity = item.count;
+            };
 
-        //  Ячейка единицы измерения
-        const unitCell = row.getCell(startColInd + 3);
-        unitCell.value = item.materialUnit;
-        unitCell.alignment = algnRight;
+            //  Преобразование площадного материала  
+            if (settings.estimate.useCoefficient) {
+                let k = item.k ? item.k : 1;
+                price = k * price;
+                if (item.area) {
+                    quantity = Math.round(quantity * k);
+                    unit = 'шт';
+                };
+            } else {
+                if (item.area) unit = 'м2';
+            };
 
-        //  Ячейка количества
-        const quantityCell = row.getCell(startColInd + 4);
-        quantityCell.value = item.quantity;
-        quantityCell.alignment = algnRight;
-        quantityCell.numFmt = f_format;
+            // Ячейка кода номенклатуры
+            const codeCell = row.getCell(startColInd);
+            codeCell.value = item.materialSyncExternal;
+            codeCell.alignment = algnLeft;
+            if (!codeCell.value) codeCell.fill = fill_yellow;
 
-        //  Стилизация строк таблицы
-        if (i < materials.length - 1) {
-            setRowTableStyle(       //  Основная строка
-                row,                //  Строка
-                startColInd,        //  Начало диапазона ячеек строки
-                headers.length,     //  Конец диапазона ячеек строки
-                row_height - 1,     //  Высота строки
-                'main',             //  Тип строки
-                r_font              //  Стиль шрифта
-            );
-        } else {
-            setRowTableStyle(       //  Последняя строка таблицы
-                row,                //  Строка
-                startColInd,        //  Начало диапазона ячеек строки
-                headers.length,     //  Конец диапазона ячеек строки
-                row_height - 1,     //  Высота строки
-                'end',              //  Тип строки
-                r_font              //  Стиль шрифта
+            // Ячейка артикула
+            const articleCell = row.getCell(startColInd + 1);
+            articleCell.value = item.materialArticle;
+            articleCell.alignment = algnLeft;
+
+            // Ячейка названия номенклатуры
+            const materialCell = row.getCell(startColInd + 2);
+            materialCell.value = item.materialName;
+            materialCell.alignment = algnLeft;
+
+            // Ячейка количества
+            const quantityCell = row.getCell(startColInd + 3);
+            quantityCell.value = quantity;
+            quantityCell.alignment = algnRight;
+            quantityCell.numFmt = f_format;
+
+            // Ячейка единицы измерения
+            const unitCell = row.getCell(startColInd + 4);
+            unitCell.value = unit;
+            if (!unitCell.value) unitCell.fill = fill_yellow;
+            unitCell.alignment = algnRight;
+
+            //  Стилизация строк таблицы
+            setRowTableStyle(
+                row,
+                startColInd,
+                headers.length,
+                rh - 1,
+                'main',
+                r_font
             );
         };
-        index++;
-    };
+        ind += items.length;
+    });
 
-    // Сохранение документа
+    //  Последняя строка таблицы страницы
+    const lastRow = worksheet.getRow(ind - 1);
+    setRowTableStyle(       //  Последняя строка таблицы
+        lastRow,            //  Строка
+        startColInd,        //  Начало диапазона ячеек строки
+        headers.length,     //  Конец диапазона ячеек строки
+        rh - 1,             //  Высота строки
+        'end',              //  Тип строки
+        r_font              //  Стиль шрифта
+    );
+
     const fileName = `${sanitizeFileName(
-        PROJECT_NAME + "_Спецификация для загрузки в 1С" + ` (${index})`
+        PROJECT_NAME + "_Спецификация для загрузки в 1С" + ` (${ind})`
     )}.xlsx`;
-    const filePath = path.join(FOLDER, fileName);
+
+    // Проверяем/создаем директорию
+    const RF = path.join(FOLDER, SW_FOLDER);
+    if (!fs.existsSync(RF)) fs.mkdirSync(RF, { recursive: true });
+    const filePath = path.join(RF, fileName);
     await workbook.xlsx.writeFile(filePath);
 };
 
@@ -2737,141 +2793,225 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
         fitToHeight: 0,             // По высоте (0 = автоматически)
     };
 
-    //===   Сводная страница проекта    ======================================//
+    //  Функция создания таблицы вкладки
+    function createSheet(data) {
+        const {
+            classes,
+            estimate,
+            columns,
+            headers,
+            sheet_name,
+            sheet_header,
+        } = data;
+
+        //  Создаем новую вкладку документа
+        const worksheet = workbook.addWorksheet(sheet_name);
+        worksheet.pageSetup = pageSetup;
+        worksheet.columns = columns;
+
+        //  Шапка страницы
+        const docNameRow = worksheet.getRow(2);
+        docNameRow.height = setRowHeght(h1);
+        docNameRow.alignment = { horizontal: 'left', vertical: 'middle' };
+        docNameRow.getCell(scol).font = { ...doc_font };
+        docNameRow.getCell(scol).value = sheet_header;
+
+        //  Линия под заголовком страницы
+        const lineRow = worksheet.getRow(3);
+        lineRow.height = setRowHeght(rh);
+        styleCellRange(lineRow, scol, columns.length, {
+            border: {
+                left: { style: 'none' }, right: { style: 'none' },
+                top: { style: 'medium' }, bottom: { style: 'none' }
+            }
+        });
+
+        //  Шапка таблицы
+        const headerRow = worksheet.getRow(headerRowInd);
+        for (let i = 0; i < headers.length; i++) {
+            headerRow.getCell(scol + i).value = headers[i];
+        };
+        setRowTableStyle(
+            headerRow,
+            scol,
+            headers.length,
+            rh,
+            'header',
+            h_font
+        );
+        //  Индекс строки таблицы сразу после заголовка
+        let ind = headerRowInd + 1;
+
+        //  Тело таблицы
+        classes.forEach(key => {
+            if (!estimate[key].items.length) return;
+
+            //  Сортировка материалов в пределах класса
+            let sort_options = [["materialName", "desc"]];
+            if (estimate[key].items[0].area) {
+                // Площадной материалв
+                sort_options = [
+                    ["materialTkn", "desc"], ["materialName", "asc"]
+                ];
+            } else if (estimate[key].items[0].length) {
+                //  Кромка или погонный материал
+                sort_options = [
+                    ["materialName", "desc"]
+                ];
+            } else if (estimate[key].items[0].count) {
+                //  Фурнитура
+                sort_options = [
+                    ["materialName", "desc"]
+                ];
+            };
+
+            //  Сортировка
+            const items = smartSort(estimate[key].items, sort_options);
+
+            //  Цикл по массиву класса
+            for (let i = 0; i < items.length; i++) {
+
+                //  Объект материала
+                const item = items[i];
+                const rn = ind + i; //  Индекс текущей строки
+                const row = worksheet.getRow(rn);
+
+                let unit = item.materialUnit;
+                let price = item.materialPrice;
+
+                //  Количество
+                let quantity = 0;
+                if (item.area) {
+                    quantity = item.area;
+                } else if (item.length) {
+                    quantity = item.length;
+                } else if (item.count) {
+                    quantity = item.count;
+                };
+
+                //  Преобразование площадного материала  
+                if (settings.estimate.useCoefficient) {
+                    let k = item.k ? item.k : 1;
+                    price = k * price;
+                    if (item.area) {
+                        quantity = Math.round(quantity * k);
+                        unit = 'шт';
+                    };
+                } else {
+                    if (item.area) unit = 'м2';
+                };
+
+                //  Ячейка номера строки
+                const numCell = row.getCell(scol);
+                numCell.value = i + 1;
+                numCell.alignment = algnRight;
+
+                //  Ячейка кода номенклатуры
+                const codeCell = row.getCell(scol + 1);
+                codeCell.value = item.materialSyncExternal;
+                codeCell.alignment = algnLeft;
+
+                //  Ячейка артикула номенклатуры
+                const articleCell = row.getCell(scol + 2);
+                articleCell.value = item.materialArticle;
+                articleCell.alignment = algnLeft;
+
+                //  Ячейка названия номенклатуры
+                const materialCell = row.getCell(scol + 3);
+                materialCell.value = item.materialName;
+                materialCell.alignment = algnLeft;
+
+                //  Ячейка количества
+                const quantityCell = row.getCell(scol + 4);
+                quantityCell.value = quantity;
+                quantityCell.alignment = algnRight;
+                quantityCell.numFmt = f_format;
+
+                //  Ячейка единицы измерения
+                const unitCell = row.getCell(scol + 5);
+                unitCell.value = unit;
+                unitCell.alignment = algnRight;
+
+                //  Ячейка цены
+                const priceCell = row.getCell(scol + 6);
+                priceCell.value = price;
+                priceCell.alignment = algnRight;
+                priceCell.numFmt = f_format;
+
+                //  Литеры ячеек количества и цены
+                const qnt_ltr = getColumnLetter(scol + 4);
+                const price_ltr = getColumnLetter(scol + 6);
+
+                //  Ячейка суммы
+                const sumCell = row.getCell(scol + 7);
+                sumCell.value = {
+                    formula: `${price_ltr}${rn}*${qnt_ltr}${rn}`
+                };
+                sumCell.alignment = algnRight;
+                sumCell.numFmt = f_format;
+
+                //  Стилизация строк таблицы
+                setRowTableStyle(       //  Основная строка
+                    row,                //  Строка
+                    scol,               //  Начало диапазона ячеек строки
+                    headers.length,     //  Конец диапазона ячеек строки
+                    rh - 1,             //  Высота строки
+                    'main',             //  Тип строки
+                    r_font              //  Стиль шрифта
+                );
+            };
+            ind += items.length;
+        });
+
+        //  Последняя строка таблицы страницы
+        const lastRow = worksheet.getRow(ind - 1);
+        setRowTableStyle(       //  Последняя строка таблицы
+            lastRow,            //  Строка
+            scol,               //  Начало диапазона ячеек строки
+            headers.length,     //  Конец диапазона ячеек строки
+            rh - 1,             //  Высота строки
+            'end',              //  Тип строки
+            r_font              //  Стиль шрифта
+        );
+    };
 
     //  Создаем сводную страницу проекта
-    const union_worksheet = workbook.addWorksheet('Спецификация проекта');
-    union_worksheet.pageSetup = pageSetup;
-    union_worksheet.columns = columns;
-
-    //  Шапка страницы
-    const unionDocNameRow = union_worksheet.getRow(2);
-    unionDocNameRow.height = setRowHeght(h1);
-    unionDocNameRow.alignment = { horizontal: 'left', vertical: 'middle' };
-    unionDocNameRow.getCell(scol).font = { ...doc_font };
-    unionDocNameRow.getCell(scol).value = `Спецификация проекта ${PROJECT_NAME}`;
-
-    //  Линия под заголовком страницы
-    const lineRow = union_worksheet.getRow(3);
-    lineRow.height = setRowHeght(rh);
-    styleCellRange(lineRow, scol, columns.length, {
-        border: {
-            left: { style: 'none' }, right: { style: 'none' },
-            top: { style: 'medium' }, bottom: { style: 'none' }
-        }
+    createSheet({
+        classes: classes,
+        estimate: agr_arr,
+        columns: columns,
+        headers: headers,
+        sheet_name: `Спецификация проекта`.substring(0, 31),
+        sheet_header: `Сводная таблица`
     });
 
-    //  Шапка основной таблицы
-    const unionHeaderRow = union_worksheet.getRow(headerRowInd);
-    for (let i = 0; i < headers.length; i++) {
-        unionHeaderRow.getCell(scol + i).value = headers[i];
-    };
-    setRowTableStyle(   //  Применяем стили заглавной строки таблицы
-        unionHeaderRow,
-        scol,
-        headers.length,
-        rh,
-        'header',
-        h_font
-    );
 
-    //  Построение своднйо таблицы материалов проект
-    for (let i = 0; i < agr_arr.length; i++) {
-        const item = agr_arr[i];
-        const rn = headerRowInd + 1 + i;
-        const row = union_worksheet.getRow(rn);
+    prj_arr.forEach(model => {
+        const estimate = model.estimate_data;   //  Объект данных Сметы
+        const name = model.name;                //  Имя изделия
+        const sign = model.sign;                //  Обозначение в Проекте
+        const sheet_name = `${sign}_${name}`.substring(0, 31);
+        const sheet_header = `${name}`;
 
-        let unit = item.materialUnit;
-        let price = item.materialPrice;
-        let quantity = item.quantity;
-        if (settings.estimate.useCoefficient) {
-            price = item.k * item.price;
-            if (item.quantityType == 'area') {
-                quantity = Math.round(quantity * item.k);
-                unit = 'м2';
-            };
-        };
-
-        //  Ячейка номера строки
-        const numCell = row.getCell(scol);
-        numCell.value = i + 1;
-        numCell.alignment = algnRight;
-
-        //  Ячейка кода номенклатуры
-        const codeCell = row.getCell(scol + 1);
-        codeCell.value = item.materialSyncExternal;
-        codeCell.alignment = algnLeft;
-
-        //  Ячейка артикула номенклатуры
-        const articleCell = row.getCell(scol + 2);
-        articleCell.value = item.materialArticle;
-        articleCell.alignment = algnLeft;
-
-        //  Ячейка названия номенклатуры
-        const materialCell = row.getCell(scol + 3);
-        materialCell.value = item.materialName;
-        materialCell.alignment = algnLeft;
-
-        //  Ячейка количества
-        const quantityCell = row.getCell(scol + 4);
-        quantityCell.value = quantity;
-        quantityCell.alignment = algnRight;
-        quantityCell.numFmt = f_format;
-
-        //  Ячейка единицы измерения
-        const unitCell = row.getCell(scol + 5);
-        unitCell.value = unit;
-        unitCell.alignment = algnRight;
-
-        //  Ячейка цены
-        const priceCell = row.getCell(scol + 6);
-        priceCell.value = price;
-        priceCell.alignment = algnRight;
-        priceCell.numFmt = f_format;
-
-        //  Литеры ячеек количества и цены
-        const qnt_ltr = getColumnLetter(scol + 4);
-        const price_ltr = getColumnLetter(scol + 6);
-
-        //  Ячейка суммы
-        const sumCell = row.getCell(scol + 7);
-        sumCell.value = { formula: `${price_ltr}${rn}*${qnt_ltr}${rn}` };
-        sumCell.alignment = algnRight;
-        sumCell.numFmt = f_format;
-
-        //  Стилизация строк таблицы
-        if (i < agr_arr.length - 1) {
-            setRowTableStyle(       //  Основная строка
-                row,                //  Строка
-                scol,               //  Начало диапазона ячеек строки
-                headers.length,     //  Конец диапазона ячеек строки
-                rh - 1,             //  Высота строки
-                'main',             //  Тип строки
-                r_font              //  Стиль шрифта
-            );
-        } else {
-            setRowTableStyle(       //  Последняя строка таблицы
-                row,                //  Строка
-                scol,               //  Начало диапазона ячеек строки
-                headers.length,     //  Конец диапазона ячеек строки
-                rh - 1,             //  Высота строки
-                'end',              //  Тип строки
-                r_font              //  Стиль шрифта
-            );
-        };
-    };
-
-    //===   Конец сводной страницы проекта  ==================================//
-
-
-
-
-
+        //  Создаем вкладки по изделиям проекта
+        createSheet({
+            classes: classes,
+            estimate: estimate,
+            columns: columns,
+            headers: headers,
+            sheet_name: sheet_name,
+            sheet_header: sheet_header
+        });
+    });
 
     // Сохранение документа
     const fileName = `${sanitizeFileName(
         PROJECT_NAME + "_Спецификация проекта")}.xlsx`;
-    const filePath = path.join(FOLDER, fileName);
+
+    // Проверяем/создаем директорию
+    const RF = path.join(FOLDER, SW_FOLDER);
+    if (!fs.existsSync(RF)) fs.mkdirSync(RF, { recursive: true });
+    const filePath = path.join(RF, fileName);
     await workbook.xlsx.writeFile(filePath);
 };
 
@@ -3025,27 +3165,34 @@ async function main() {
 
             //  4. Формируем обобщенные данные по моделям проекта
             setProjectEstimateData(mat_classes, prj_array);
+            //  Сводные данные по проекту в целом
+            const agrMat = aggregateMaterials(prj_array);
 
-            //  5. Формируем файлы спецификаций деталей
+            //  5. Формируем файлы проекта
 
-            //  6. Формируем файл Сметы проекта
-            //Action.Hint = `Сохраняем документы проекта...`;
-            await createEsimateExcelFile(prj_array);
+            try {
+                Action.Hint = `Сохраняем калькуляцию проекта...`;
+                await createEsimateExcelFile(prj_array);
+            } catch (e) {
+                errFinish('Ошибка создания файла калькуляции проекта: ' + e.message);
+            };
 
-            //  Формирование файла спецификации проекта
-            if (true && prj_array.length) {
-
+            try {
                 Action.Hint = `Сохраняем спецификацию для загрузки в 1С...`;
-                const agrMat = aggregateMaterials(prj_array);
                 await createSpecificationForImport(agrMat);
+            } catch (e) {
+                errFinish('Ошибка файла загрузки для 1С: ' + e.message);
+            };
 
+            try {
                 Action.Hint = `Сохраняем спецификацию проекта...`;
                 await createSpecificationProjectFile(agrMat, prj_array, settings);
+            } catch (e) {
+                errFinish('Ошибка создания файла спецификации: ' + e.message);
             };
 
             //  Завершение обработки (выход из скрипта)
-            //console.log(JSON.stringify(prj_array, null, 2));
-            console.log(`Обработано ${count} файлов из ${prj_array.length}`);
+            //alert(`Обработано ${count} файлов из ${prj_array.length}`);
             Action.Finish();
         };
     };
