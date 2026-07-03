@@ -478,45 +478,6 @@ function getColumnLetter(colNumber) {
     return letter;
 };
 
-//  Транслитерация кириллицы в латиницу
-function transliterate(text, separator = '_') {
-    const map = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e',
-        'ё': 'jo', 'ж': 'g', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k',
-        'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r',
-        'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'c',
-        'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '',
-        'э': 'e', 'ю': 'yu', 'я': 'ya',
-        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E',
-        'Ё': 'JO', 'Ж': 'G', 'З': 'Z', 'И': 'I', 'Й': 'J', 'К': 'K',
-        'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R',
-        'С': 'S', 'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'KH', 'Ц': 'C',
-        'Ч': 'CH', 'Ш': 'SH', 'Щ': 'SCH', 'Ъ': '', 'Ы': 'Y', 'Ь': '',
-        'Э': 'E', 'Ю': 'YU', 'Я': 'Ya'
-    };
-
-    let result = '';
-
-    for (let char of text) {
-        if (map[char] !== undefined) {
-            result += map[char];
-        } else if (char === ' ') {
-            result += separator;
-        } else if (/[a-zA-Z0-9]/.test(char)) {
-            result += char;
-        } else {
-            result += char; // оставляем другие символы как есть
-        }
-    }
-
-    // Убираем множественные разделители
-    result = result.replace(new RegExp(`${separator}+`, 'g'), separator);
-    // Убираем разделители в начале и конце
-    result = result.replace(new RegExp(`^${separator}|${separator}$`, 'g'), '');
-
-    return result;
-};
-
 //#endregion
 
 //#region Функции рекурсивного обхода
@@ -612,35 +573,6 @@ function readProjectFilesData(prj_file) {
     } catch (e) {
         errFinish(e.message);
     };
-};
-
-//  Функция дл ясборочных чертежей
-function getAssemblyName(list, prj_item) {
-    let result = [];
-    for (let i = 0; i < list.Count; i++) {
-        const item = list[i];
-        if (
-            (item instanceof TFurnBlock || item instanceof TDraftBlock) &&
-            !item.JointData &&
-            item.IsAssemblyUnit === true
-        ) {
-            const sbName = transliterate(item.Name);
-            const sign = transliterate(prj_item.sign);
-            const prjName = transliterate(PROJECT_NAME);
-
-            const delimPrjName = settings.delimPrjName;
-            const delimPrjSign = settings.delimPrjSign;
-            const modelDrawName = `${prjName}${delimPrjName}${sign}_SB`;
-            const drawName = `${modelDrawName}_na_${sbName}`;
-            result.push({
-                prjName: PROJECT_NAME,
-                sign: prj_item.sign,
-                drawName: drawName,
-                modelDrawName: modelDrawName
-            })
-        };
-    };
-    return result;
 };
 
 //#endregion
@@ -3352,7 +3284,6 @@ async function main() {
     let ind = 0;    //  Индекс файла Проекта
     let count = 0;  //  Счетчик обработанных файлов
     let prj_array = readProjectFilesData(PROJECT_FILE);
-    let assembly_array = [];
 
     //  Функция рекурсивного обхода массива файлов Проекта
     async function proccessNextFile() {
@@ -3377,10 +3308,6 @@ async function main() {
                 //  Добавляем наименование заказа в данные
                 prj_array[ind].modelName = Article.Name;
                 count++;
-
-                //  Обход блоков сборочных единиц 1 уровня
-                let arr = getAssemblyName(Model.AsList(), prj_array[ind]);
-                assembly_array.push(...arr);
             };
         };
 
@@ -3406,27 +3333,27 @@ async function main() {
             //  4. Формируем обобщенные данные по моделям проекта
             setProjectEstimateData(mat_classes, prj_array);
             //  Сводные данные по проекту в целом
-            const agrMat = aggregateMaterials(prj_array);
+            //const agrMat = aggregateMaterials(prj_array);
 
             //  5. Формируем файлы проекта
 
             try {
                 Action.Hint = `Сохраняем калькуляцию проекта...`;
-                await createEsimateExcelFile(prj_array);
+                //await createEsimateExcelFile(prj_array);
             } catch (e) {
                 errFinish('Ошибка создания файла калькуляции проекта: ' + e.message);
             };
 
             try {
                 Action.Hint = `Сохраняем спецификацию для загрузки в 1С...`;
-                await createSpecificationForImport(agrMat);
+                //await createSpecificationForImport(agrMat);
             } catch (e) {
                 errFinish('Ошибка файла загрузки для 1С: ' + e.message);
             };
 
             try {
                 Action.Hint = `Сохраняем спецификацию проекта...`;
-                await createSpecificationProjectFile(agrMat, prj_array, settings);
+                //await createSpecificationProjectFile(agrMat, prj_array, settings);
             } catch (e) {
                 errFinish('Ошибка создания файла спецификации: ' + e.message);
             };
