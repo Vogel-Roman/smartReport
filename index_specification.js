@@ -8,6 +8,7 @@ const path = require('path');
 const firebird = require('node-firebird');
 const ExcelJS = require('exceljs');
 const { XMLParser } = require('fast-xml-parser');
+const { pdfToPng } = require('pdf-to-png-converter');
 
 //#region Инициализация
 
@@ -515,6 +516,27 @@ function transliterate(text, separator = '_') {
     result = result.replace(new RegExp(`^${separator}|${separator}$`, 'g'), '');
 
     return result;
+};
+
+async function convertPDFtoPNG(fileName, outputDIR) {
+    const outputPath = path.join(outputDIR, `${fileName}.png`);
+    const inputPath = path.join(outputDIR, `${fileName}.pdf`);
+
+    // console.log(outputDIR);
+    // console.log(fileName);
+    // console.log(inputPath);
+
+    try {
+        const pngPages = await pdfToPng(inputPath, {
+            pagesToProcess: [1],              // Только первая страница
+            outputFolder: settings.drawDIR,
+            outputMask: fileName,              // Имя файла без номера страницы
+            viewportScale: 2.0,                // Качество (2.0 = удвоенное разрешение)
+        });
+        return outputPath;
+    } catch (e) {
+        return null;
+    };
 };
 
 //#endregion
@@ -3305,30 +3327,13 @@ async function createAssemblyDrawings(prj_arr, settings) {
 
     //#endregion
 
-    // const pageSetup = {
-    //     orientation: 'landscape',       // Горизонтальная ориентация
-    //     paperSize: 9,                   // A4
-    //     fitToPage: true,
-    //     fitToWidth: 1,
-    //     fitToHeight: 1,
-    //     margins: {
-    //         left: 0.7,
-    //         right: 0.7,
-    //         top: 0.7,
-    //         bottom: 0.7,
-    //         header: 0.3,
-    //         footer: 0.3
-    //     }
-    // };
-
-
     const pageSetup = {
         orientation: 'landscape',    // 'portrait' | 'landscape'
         margins: {                  // Поля страницы в дюймах (1д = 2.54см)
-            top: 0.1,               // Верхнее поле
+            top: 0.0,               // Верхнее поле
             bottom: 0.0,            // Нижнее поле
-            left: 0.67,             // Левое поле
-            right: 0.0,            // Правое поле
+            left: 0.0,              // Левое поле
+            right: 0.0,             // Правое поле
             header: 0.0,            // Отступ для колонтитула сверху
             footer: 0.0             // Отступ для колонтитула снизу
         },
@@ -3343,13 +3348,15 @@ async function createAssemblyDrawings(prj_arr, settings) {
         { width: 1 },
         { width: 3 },
         { width: 4 },
-        { width: 8 },   //  Позиция
-        { width: 24 },  //  Название
-        { width: 7 },   //  Количество
+        { width: 6 },   //  Позиция
+        { width: 20 },  //  Название
+        { width: 6 },   //  Количество
         { width: 9 },   //  Длина
         { width: 9 },   //  Ширина
         { width: 24 },   //  Материал
         { width: 3 },
+        { width: 8 },
+        { width: 8 },
         { width: 8 },
         { width: 8 },
         { width: 8 },
@@ -3359,71 +3366,6 @@ async function createAssemblyDrawings(prj_arr, settings) {
 
     //  Количество строк листа
     const totalRows = 50;
-
-    function createDrawingSheet(workbook, sheetName, drawings = [], options = {}) {
-        // Создаем лист
-        const worksheet = workbook.addWorksheet(sheetName);
-
-        // Настройка страницы А4 горизонтальная
-        worksheet.pageSetup = {
-            orientation: 'landscape',        // Горизонтальная ориентация
-            paperSize: 9,                   // A4
-            fitToPage: true,
-            fitToWidth: 1,
-            fitToHeight: 1,
-            margins: {
-                left: 0.7,
-                right: 0.7,
-                top: 0.7,
-                bottom: 0.7,
-                header: 0.3,
-                footer: 0.3
-            }
-        };
-
-        // Устанавливаем размеры колонок для формата А4
-        // A4 горизонтальный: ~297mm x 210mm
-        // В Excel примерно 96 пикселей на дюйм, 1 колонка ≈ 7.5 пикселей
-        // Для А4 нужно около 28 колонок (примерно)
-        const columnWidth = 7.5;
-        const totalColumns = 28;
-
-        for (let i = 1; i <= totalColumns; i++) {
-            worksheet.getColumn(i).width = columnWidth;
-        }
-
-        // Устанавливаем высоту строк (примерно 15 пунктов)
-        const rowHeight = 15;
-        const totalRows = 42; // Примерно для А4
-
-        for (let i = 1; i <= totalRows; i++) {
-            worksheet.getRow(i).height = rowHeight;
-        }
-
-        // Рисуем рамку по периметру листа
-        drawBorder(worksheet, 1, 1, totalColumns, totalRows);
-
-        // Добавляем основную надпись (штамп) в правом нижнем углу
-        drawTitleBlock(worksheet, totalColumns, totalRows);
-
-        // Если есть чертежи, добавляем их
-        if (drawings && drawings.length > 0) {
-            // Заголовок "Сборочные чертежи"
-            worksheet.mergeCells(`A${2}:${getColumnLetter(totalColumns)}${2}`);
-            const titleCell = worksheet.getCell(`A${2}`);
-            titleCell.value = 'СБОРОЧНЫЕ ЧЕРТЕЖИ';
-            titleCell.font = { bold: true, size: 16, name: 'Arial' };
-            titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-
-            // Добавляем каждый чертеж
-            drawings.forEach((drawing, index) => {
-                const startRow = 5 + (index * 15);
-                addDrawingPlaceholder(worksheet, drawing, startRow, totalColumns);
-            });
-        }
-
-        return worksheet;
-    }
 
     //  Рисует рамку по периметру
     function drawBorder(worksheet, startCol, startRow, endCol, endRow) {
@@ -3513,72 +3455,18 @@ async function createAssemblyDrawings(prj_arr, settings) {
         worksheet.getCell(startRow + 3, startCol + 4).value = '1';
     };
 
-    // Добавляет место для чертежа
-    function addDrawingPlaceholder(worksheet, drawing, startRow, totalColumns) {
-        const { name, number, description } = drawing;
-
-        // Номер чертежа
-        const numCell = worksheet.getCell(`A${startRow}`);
-        numCell.value = number || `${startRow - 4}`;
-        numCell.font = { bold: true, size: 10 };
-        numCell.alignment = { horizontal: 'center', vertical: 'middle' };
-
-        // Название чертежа
-        worksheet.mergeCells(`B${startRow}:${getColumnLetter(totalColumns - 2)}${startRow}`);
-        const nameCell = worksheet.getCell(`B${startRow}`);
-        nameCell.value = name || 'Чертеж';
-        nameCell.font = { bold: true, size: 12 };
-        nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-        // Место для изображения (рамка)
-        const imgStartRow = startRow + 1;
-        const imgEndRow = startRow + 12;
-        const imgStartCol = 2;
-        const imgEndCol = totalColumns - 2;
-
-        // Рисуем рамку для изображения
-        for (let row = imgStartRow; row <= imgEndRow; row++) {
-            for (let col = imgStartCol; col <= imgEndCol; col++) {
-                const cell = worksheet.getCell(row, col);
-                cell.border = {
-                    top: { style: 'thin' },
-                    left: { style: 'thin' },
-                    bottom: { style: 'thin' },
-                    right: { style: 'thin' }
-                };
-            }
-        }
-
-        // Текст-заглушка, если нет изображения
-        if (!drawing.imagePath) {
-            worksheet.mergeCells(`${getColumnLetter(imgStartCol)}${imgStartRow + 5}:${getColumnLetter(imgEndCol)}${imgStartRow + 6}`);
-            const placeholderCell = worksheet.getCell(imgStartRow + 5, imgStartCol);
-            placeholderCell.value = '[Место для чертежа]';
-            placeholderCell.alignment = { horizontal: 'center', vertical: 'middle' };
-            placeholderCell.font = { color: { argb: 'FF808080' }, italic: true };
-        }
-
-        // Описание чертежа
-        if (description) {
-            const descRow = imgEndRow + 1;
-            worksheet.mergeCells(`${getColumnLetter(2)}${descRow}:${getColumnLetter(totalColumns - 2)}${descRow}`);
-            const descCell = worksheet.getCell(2, descRow);
-            descCell.value = description;
-            descCell.alignment = { horizontal: 'left', vertical: 'middle' };
-            descCell.font = { size: 9, italic: true };
-        }
-    };
-
     //  Создаем новую книгу документа
     const workbook = new ExcelJS.Workbook();    //  Новая книга
     workbook.creator = settings.author;         //  Автор документа
     workbook.created = new Date();              //  Дата документа
 
-    function createSheetAU(data) {
+    async function createSheetAU(data) {
         const {
             workbook,
             sheet_name,
-            columns
+            columns,
+            drawName,
+            drawDIR
         } = data;
 
         //  Создаем новую вкладку документа
@@ -3586,40 +3474,30 @@ async function createAssemblyDrawings(prj_arr, settings) {
         worksheet.pageSetup = pageSetup;
         worksheet.columns = columns;
 
-        // // Устанавливаем размеры колонок для формата А4
-        // // A4 горизонтальный: ~297mm x 210mm
-        // // В Excel примерно 96 пикселей на дюйм, 1 колонка ≈ 7.5 пикселей
-        // // Для А4 нужно около 28 колонок (примерно)
-        // const columnWidth = 7.5;
-        // const totalColumns = 28;
-        // for (let i = 1; i <= totalColumns; i++) {
-        //     worksheet.getColumn(i).width = columnWidth;
-        // };
-
-        // // Устанавливаем высоту строк (примерно 15 пунктов rh)
-        // const totalRows = 42; // Примерно для А4
-        // for (let i = 1; i <= totalRows; i++) {
-        //     worksheet.getRow(i).height = rh;
-        // };
-
         for (let i = 1; i <= totalRows; i++) worksheet.getRow(i).height = rh;
-
 
         // Рисуем рамку по периметру листа
         drawBorder(worksheet, 2, 1, columns.length, totalRows);
 
+        //  Проверяем существование pdf файла
 
+
+        // const outputDIR = path.join(settings.drawDIR, 'pdf');
+        // if (fs.existsSync(outputDIR)) {
+        //     const pngDrawName = await convertPDFtoPNG(drawName, outputDIR);
+        // };
     };
 
 
-    prj_arr.forEach(array => {
-
+    prj_arr.forEach(async array => {
         for (let i = 0; i < array.length; i++) {
             const aUnit = array[i];
-            createSheetAU({
+            await createSheetAU({
                 workbook: workbook,
                 sheet_name: aUnit.sign + i,
-                columns: columns
+                columns: columns,
+                drawName: aUnit.drawName,
+                drawDIR: settings.drawDIR
             });
         };
     });
