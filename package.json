@@ -12,7 +12,7 @@
     "@napi-rs/canvas-win32-x64-msvc": "^1.0.2",
     "exceljs": "^3.4.0",
     "fast-xml-parser": "^5.7.2",
-    "node-firebird": "^0.1.2",
-    "pdf-to-png-converter": "^4.1.1"
+    "image-size": "^2.0.2",
+    "node-firebird": "^0.1.2"
   }
 }

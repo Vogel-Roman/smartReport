@@ -4,11 +4,15 @@
 /******************************************************************************/
 
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const firebird = require('node-firebird');
+const { imageSize } = require('image-size');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 const ExcelJS = require('exceljs');
 const { XMLParser } = require('fast-xml-parser');
-const { pdfToPng } = require('pdf-to-png-converter');
 
 //#region Инициализация
 
@@ -24,6 +28,9 @@ const EPS = 1e-10;
 
 //  Расширения обрабатываемых файлов
 const extensions = ['.fr3d', '.b3d'];
+
+// Путь к конвертеру
+const CONVERTER_EXE = path.resolve(__dirname, 'service', 'converter_batch.exe');
 
 // Проверяем существование файла и читаем файл настроек settings.json 
 if (!fs.existsSync("settings.json"))
@@ -518,25 +525,112 @@ function transliterate(text, separator = '_') {
     return result;
 };
 
-async function convertPDFtoPNG(fileName, outputDIR) {
-    const outputPath = path.join(outputDIR, `${fileName}.png`);
-    const inputPath = path.join(outputDIR, `${fileName}.pdf`);
+//  Функция конвертации PDF файлов чертежей в PNG файлы
+async function convertPDFtoPNG(fileNames, baseDIR) {
 
-    // console.log(outputDIR);
-    // console.log(fileName);
-    // console.log(inputPath);
-
+    //  Проверяем существование конвертера
     try {
-        const pngPages = await pdfToPng(inputPath, {
-            pagesToProcess: [1],              // Только первая страница
-            outputFolder: settings.drawDIR,
-            outputMask: fileName,              // Имя файла без номера страницы
-            viewportScale: 2.0,                // Качество (2.0 = удвоенное разрешение)
-        });
-        return outputPath;
-    } catch (e) {
-        return null;
+        await fsPromises.access(CONVERTER_EXE);
+    } catch {
+        console.log(`Файл конвертера не найден.`);
+        return;
     };
+
+    Action.Hint = "Конвертируем изображения чертежей в PNG...";
+    const sourseDIR = path.join(baseDIR, 'pdf');
+    const outputDIR = path.join(baseDIR, 'png');
+
+    // Создаём выходную папку, если её нет
+    await fsPromises.mkdir(outputDIR, { recursive: true });
+
+    // Формируем массив имён с расширением .pdf
+    const pdfFiles = fileNames.map(name => `${name}.pdf`);
+
+    // Проверяем, что все файлы существуют (опционально)
+    const missing = [];
+    for (const file of pdfFiles) {
+        const fullPath = path.join(sourseDIR, file);
+        try {
+            await fsPromises.access(fullPath);
+        } catch {
+            missing.push(file);
+        };
+    };
+    if (missing.length > 0) {
+        console.warn(`Следующие файлы не найдены и будут пропущены:`, missing.join(', '));
+        // Удаляем их из списка, чтобы не пытаться обрабатывать
+        pdfFiles = pdfFiles.filter(f => !missing.includes(f));
+    };
+    if (pdfFiles.length === 0) {
+        console.warn('Нет доступных PDF-файлов для конвертации.');
+        return;
+    };
+
+    // Создаём временный JSON-файл
+    const jsonFilePath = path.join(__dirname, 'service', '_filenames.json');
+    await fsPromises.writeFile(jsonFilePath, JSON.stringify(pdfFiles, null, 2), 'utf8');
+
+    // Запускаем конвертер
+    const command = `"${CONVERTER_EXE}" "${jsonFilePath}" "${sourseDIR}" "${outputDIR}"`;
+    try {
+        const { stdout, stderr } = await execPromise(command);
+        if (stdout) console.log(stdout);
+        if (stderr) console.warn('ERROR', stderr);
+    } catch (error) {
+        console.error('Ошибка при выполнении конвертера:', error.message);
+        if (error.stdout) console.log(error.stdout);
+        if (error.stderr) console.error(error.stderr);
+    } finally {
+        try {
+            await fsPromises.unlink(jsonFilePath); // Удаляем временный JSON-файл
+            console.log(`Временный файл удалён: ${jsonFilePath}`);
+        } catch (e) {
+            console.warn('Не удалось удалить временный файл:', e.message);
+        };
+        Action.Hint = "Изображения сформированы";
+        return true;
+    };
+};
+
+//  Функция получения процента увеличения изображения монитора
+async function getWindowsScreenScale() {
+    return new Promise((resolve, reject) => {
+        const psCommand = `powershell -NoProfile -Command "$m = '[DllImport(\\"shcore.dll\\")] public static extern int GetScaleFactorForMonitor(IntPtr h, out int s); [DllImport(\\"user32.dll\\")] public static extern IntPtr MonitorFromWindow(IntPtr hw, uint f);'; Add-Type -MemberDefinition $m -Name 'Dpi' -Namespace 'Win' -PassThru | Out-Null; $h = [Win.Dpi]::MonitorFromWindow([IntPtr]::Zero, 1); $s = 0; $null = [Win.Dpi]::GetScaleFactorForMonitor($h, [ref]$s); Write-Output $s"`;
+        exec(psCommand, (error, stdout, stderr) => {
+            if (error) return reject(error);
+            const scale = parseInt(stdout.trim(), 10);
+            resolve(scale);
+        });
+    });
+};
+
+//  Рассчитываем высоту строки в зависимости от масштаба
+function getAdaptiveRowHeight(baseHeight, scale) {
+    // При увеличении масштаба высота строк должна уменьшаться,
+    // чтобы чертеж помещался на страницу
+    const scaleFactors = {
+        100: 1.0,
+        125: 1.20,
+        150: 1.45,
+        175: 1.75,
+        200: 2.00,
+        225: 2.25,
+        250: 2.50
+    };
+
+    // Находим ближайший ключ
+    const keys = Object.keys(scaleFactors).map(Number).sort((a, b) => a - b);
+    let factor = scaleFactors[100];
+
+    for (const key of keys) {
+        if (scale >= key) {
+            factor = scaleFactors[key];
+        }
+    }
+
+    // Округляем до 0.5
+    const result = Math.round((baseHeight * factor) * 2) / 2;
+    return Math.max(result, 8); // Минимальная высота 8pt
 };
 
 //#endregion
@@ -3275,7 +3369,6 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
 //  Функция формирования сборочных чертежей
 async function createAssemblyDrawings(prj_arr, settings) {
 
-
     //#region Настройки стилей документа
 
     //  Шрифт документа
@@ -3303,8 +3396,11 @@ async function createAssemblyDrawings(prj_arr, settings) {
         bold: false
     };
     const h1 = 24;              //  Высота строки заголовка страницы
-    const rh = 14;              //  Высота строки данных (таблицы)   
-    const scol = 2;             //  Начальная колонка таблицы
+    //const rh = 14;              //  Высота строки данных (таблицы) 
+    let screenScale = await getWindowsScreenScale();
+    const rh = getAdaptiveRowHeight(14, screenScale);
+
+    const scol = 3;             //  Начальная колонка таблицы
     const headerRowInd = 6;     //  Индекс верхней строки таблицы
 
     //  Настройки цветов заливки ячеек
@@ -3325,10 +3421,8 @@ async function createAssemblyDrawings(prj_arr, settings) {
     const sf_format = '#,##0.0';
     const n_format = '# ##0';
 
-    //#endregion
-
     const pageSetup = {
-        orientation: 'landscape',    // 'portrait' | 'landscape'
+        orientation: 'landscape',   // 'portrait' | 'landscape'
         margins: {                  // Поля страницы в дюймах (1д = 2.54см)
             top: 0.0,               // Верхнее поле
             bottom: 0.0,            // Нижнее поле
@@ -3342,10 +3436,11 @@ async function createAssemblyDrawings(prj_arr, settings) {
         fitToWidth: 1,              // Вписать по ширине (1 страница)
         fitToHeight: 0,             // По высоте (0 = автоматически)
     };
+    //#endregion
 
     //  Настройка ширины колонок документа
     const columns = [
-        { width: 1 },
+        { width: 3 },   //  Отступ от края листа
         { width: 3 },
         { width: 4 },
         { width: 6 },   //  Позиция
@@ -3361,11 +3456,9 @@ async function createAssemblyDrawings(prj_arr, settings) {
         { width: 8 },
         { width: 8 },
         { width: 8 },
+        { width: 8 },
         { width: 3 }
     ];
-
-    //  Количество строк листа
-    const totalRows = 50;
 
     //  Рисует рамку по периметру
     function drawBorder(worksheet, startCol, startRow, endCol, endRow) {
@@ -3455,10 +3548,98 @@ async function createAssemblyDrawings(prj_arr, settings) {
         worksheet.getCell(startRow + 3, startCol + 4).value = '1';
     };
 
+    //  Функция вычисления размер изображения
+    function calculateImageFit(imageBuffer, worksheet, area, columns) {
+        // Получаем размеры изображения
+        const dimensions = imageSize(imageBuffer);
+
+        // Суммируем ширину колонок от startCol до endCol
+        let areaWidth = 0;
+        for (let i = area.startCol; i <= area.endCol; i++) {
+            // Индексы колонок в массиве начинаются с 0, а в Excel с 1
+            const colIndex = i - 1;
+            if (colIndex >= 0 && colIndex < columns.length) {
+                areaWidth += columns[colIndex].width || 8; // если width нет, берем 8 по умолчанию
+            }
+        }
+
+        // Ширина колонки в пикселях: 1 единица ширины Excel ≈ 7.5 пикселей
+        // Точнее: 1 единица = 7.5 пикселей (при стандартном шрифте)
+        const PIXELS_PER_UNIT = 8.0;
+        areaWidth = areaWidth * PIXELS_PER_UNIT;
+
+        // Высота области (суммируем высоту строк)
+        let areaHeight = 0;
+        for (let i = area.startRow; i <= area.endRow; i++) {
+            const row = worksheet.getRow(i);
+            areaHeight += row.height || 15; // если height нет, берем 15 по умолчанию
+        }
+        // Высота строки в пикселях: 1 пункт ≈ 1.33 пикселя
+        const PIXELS_PER_POINT = 1.33;
+        areaHeight = areaHeight * PIXELS_PER_POINT;
+
+        const imageWidth = dimensions.width;
+        const imageHeight = dimensions.height;
+
+        // Вычисляем масштаб по ширине
+        const scale = areaWidth / imageWidth;
+
+        const finalWidth = areaWidth;
+        const finalHeight = Math.floor(imageHeight * scale);
+
+        return {
+            width: finalWidth,
+            height: finalHeight,
+            offsetX: 0,
+            offsetY: 0,
+            originalWidth: imageWidth,
+            originalHeight: imageHeight,
+            scale: scale,
+            areaWidth: areaWidth,
+            areaHeight: areaHeight
+        };
+    };
+
+    //  Добавляет изображение на лист с вписыванием в область
+    async function addImageFit(worksheet, workbook, imageBuffer, area, columns) {
+        const result = calculateImageFit(imageBuffer, worksheet, area, columns);
+
+        const imageId = workbook.addImage({
+            buffer: imageBuffer,
+            extension: 'png'
+        });
+
+        await worksheet.addImage(imageId, {
+            tl: {
+                col: area.startCol,
+                row: area.startRow,
+                colOff: result.offsetX || 0,
+                rowOff: result.offsetY || 0
+            },
+            ext: {
+                width: result.width,
+                height: result.height
+            }
+        });
+
+        return result;
+    };
+
+    //  Формируем картинки
+    const drawNames = prj_arr.flatMap(item => item.map(el => el.drawName));
+    const pictureBool = await convertPDFtoPNG(drawNames, settings.drawDIR);
+    if (!pictureBool) return;   //  Отменяем если картинки не сформированы
+
     //  Создаем новую книгу документа
+
+    Action.Hint = 'Создаем сборочные чертежи';
     const workbook = new ExcelJS.Workbook();    //  Новая книга
     workbook.creator = settings.author;         //  Автор документа
     workbook.created = new Date();              //  Дата документа
+
+
+    //  Количество строк листа
+    const totalRows = 42;
 
     async function createSheetAU(data) {
         const {
@@ -3469,27 +3650,46 @@ async function createAssemblyDrawings(prj_arr, settings) {
             drawDIR
         } = data;
 
-        //  Создаем новую вкладку документа
         const worksheet = workbook.addWorksheet(sheet_name);
         worksheet.pageSetup = pageSetup;
         worksheet.columns = columns;
 
-        for (let i = 1; i <= totalRows; i++) worksheet.getRow(i).height = rh;
+        for (let i = 1; i <= totalRows; i++) {
+            worksheet.getRow(i).height = rh;
+        };
 
-        // Рисуем рамку по периметру листа
-        drawBorder(worksheet, 2, 1, columns.length, totalRows);
+        drawBorder(worksheet, 2, 2, columns.length, totalRows);
 
-        //  Проверяем существование pdf файла
+        const drawPath = path.join(drawDIR, 'png', drawName + '.png');
+        try {
+            await fsPromises.access(drawPath);
+        } catch {
+            console.log(`Файл не найден: ${drawPath}`);
+            return;
+        };
 
+        const imageBuffer = await fsPromises.readFile(drawPath);
 
-        // const outputDIR = path.join(settings.drawDIR, 'pdf');
-        // if (fs.existsSync(outputDIR)) {
-        //     const pngDrawName = await convertPDFtoPNG(drawName, outputDIR);
-        // };
-    };
+        // Область для изображения (колонки 10-15)
+        const area = {
+            startCol: 10,
+            startRow: 2,
+            endCol: 15,
+            endRow: 45
+        };
 
+        // Добавляем изображение с вписыванием
+        const result = await addImageFit(
+            worksheet,
+            workbook,
+            imageBuffer,
+            area,
+            columns  // Передаем массив колонок
+        );
+    }
 
-    prj_arr.forEach(async array => {
+    //  Запускаем цикл формирования страниц сборочных чертежей
+    for (const array of prj_arr) {
         for (let i = 0; i < array.length; i++) {
             const aUnit = array[i];
             await createSheetAU({
@@ -3499,8 +3699,8 @@ async function createAssemblyDrawings(prj_arr, settings) {
                 drawName: aUnit.drawName,
                 drawDIR: settings.drawDIR
             });
-        };
-    });
+        }
+    }
 
     // Сохранение документа
     const fileName = `${sanitizeFileName(
