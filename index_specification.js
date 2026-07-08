@@ -12,6 +12,7 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 const { XMLParser } = require('fast-xml-parser');
 
 //#region Инициализация
@@ -177,6 +178,16 @@ function smartSort(arr, options) {
         };
         return 0;
     });
+};
+
+//  Преобразует дату в формат ДД.ММ.ГГГГ
+function formatDate(date) {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    if (!(d instanceof Date) || isNaN(d)) return 'Некорректная дата';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}.${month}.${year}`;
 };
 
 // Функция поиска отверстий принадлежжащих панели
@@ -751,9 +762,11 @@ function getAssemblyName(list, prj_item) {
             result.push({
                 prjName: PROJECT_NAME,
                 sign: prj_item.sign,
-                drawName: drawName,
-                modelDrawName: modelDrawName
-            })
+                drawName: drawName,             //  Название СБ (тр-лит.)
+                auName: item.Name,              //  Название СБ
+                modelName: prj_item.modelName,  //  Название модели
+                modelDrawName: modelDrawName    //  Название схемы сборки (тр-лит.)
+            });
         };
     };
     return result;
@@ -1577,7 +1590,7 @@ function aggregateMaterials(prj_arr) {
     }
 
     return result;
-}
+};
 
 //#endregion
 
@@ -3714,6 +3727,397 @@ async function createAssemblyDrawings(prj_arr, settings) {
 
 };
 
+//  Функция создания PDF сборочных чертежей
+async function createPDFAssemblyDrawings(assembly_array, settings) {
+
+    const mm = 2.83465;
+    const fontName = 'Arial';
+
+    //  Функция рисует прямоугольник и текст внутри
+    function drawCell(doc, options = {}) {
+        const {
+            x,
+            y,
+            width,
+            height,
+            text = '',
+            align = 'center',
+            valign = 'center',
+            fontName: font = 'Arial',
+            fontSize = 8,
+            fontColor = '#000000',
+            bold = false,
+            italic = false,
+            underline = false,
+            strike = false,
+            borderWidth = 0.5,
+            borderColor = '#000000',
+            showBorder = true,
+            padding = 2
+        } = options;
+
+        doc.save();
+
+        // Рисуем рамку
+        if (showBorder) {
+            doc.lineWidth(borderWidth)
+                .rect(x, y, width, height)
+                .stroke(borderColor);
+        }
+
+        // Формируем имя шрифта с учетом стилей
+        let fontWithStyle = font;
+        if (font === 'Arial' || font === 'Helvetica') {
+            if (bold && italic) fontWithStyle = 'Arial-BoldItalic';
+            else if (bold) fontWithStyle = 'Arial-Bold';
+            else if (italic) fontWithStyle = 'Arial-Italic';
+            else fontWithStyle = 'Arial';
+        } else {
+            if (bold && italic) fontWithStyle = font + '-BoldItalic';
+            else if (bold) fontWithStyle = font + '-Bold';
+            else if (italic) fontWithStyle = font + '-Italic';
+            else fontWithStyle = font;
+        }
+
+        // Позиция текста
+        let textX = x + padding;
+        let textY = y + padding;
+
+        if (valign === 'center') {
+            textY = y + height / 2;
+        } else if (valign === 'bottom') {
+            textY = y + height - padding;
+        }
+
+        const textWidth = width - padding * 2;
+
+        // Применяем шрифт
+        doc.fontSize(fontSize)
+            .font(fontWithStyle)
+            .fillColor(fontColor);
+
+        // Рисуем текст
+        if (valign === 'center') {
+            doc.text(text, textX, textY, {
+                width: textWidth,
+                align: align,
+                baseline: 'middle',
+                lineBreak: false
+            });
+        } else {
+            doc.text(text, textX, textY, {
+                width: textWidth,
+                align: align,
+                baseline: 'top',
+                lineBreak: false
+            });
+        }
+
+        // Подчеркивание и зачеркивание
+        if (underline || strike) {
+            const textWidth_ = doc.widthOfString(text, {
+                fontSize: fontSize,
+                font: fontWithStyle
+            });
+
+            const lineWidth = Math.min(textWidth_, textWidth);
+
+            if (underline) {
+                const lineY = valign === 'center' ?
+                    textY + fontSize * 0.15 :
+                    textY + fontSize * 0.8;
+                doc.moveTo(textX, lineY)
+                    .lineTo(textX + lineWidth, lineY)
+                    .stroke(fontColor);
+            }
+
+            if (strike) {
+                const strikeY = valign === 'center' ?
+                    textY :
+                    textY + fontSize * 0.4;
+                doc.moveTo(textX, strikeY)
+                    .lineTo(textX + lineWidth, strikeY)
+                    .stroke(fontColor);
+            }
+        }
+
+        doc.restore();
+    };
+
+    //  Функция вставки изображения
+    function addImageFixedWidth(doc, options = {}) {
+        const {
+            imagePath,          //  путь к изображению
+            x,                  //  координата X верхнего левого угла
+            y,                  //  координата Y верхнего левого угла
+            width,              //  ширина изображения (фиксированная)
+            align = 'left',     //  'center', 'left', 'right'
+            valign = 'top'      //  'center', 'top', 'bottom'
+        } = options;
+
+        // Проверяем существование файла
+        if (!imagePath || !fs.existsSync(imagePath)) {
+            console.warn(`⚠️ Изображение не найдено: ${imagePath}`);
+            return null;
+        };
+
+        try {
+            // Читаем файл в буфер
+            const imageBuffer = fs.readFileSync(imagePath);
+
+            // Получаем размеры изображения
+            const dimensions = imageSize(imageBuffer);
+            const imageWidth = dimensions.width;
+            const imageHeight = dimensions.height;
+
+            // Вычисляем масштаб по ширине
+            const scale = width / imageWidth;
+            const height = Math.floor(imageHeight * scale);
+
+            // Добавляем изображение
+            doc.image(imageBuffer, {
+                x: x,
+                y: y,
+                width: width,
+                height: height
+            });
+
+            return {
+                width: width,
+                height: height,
+                scale: scale
+            };
+        } catch (err) {
+            console.error(`❌ Ошибка добавления изображения: ${err.message}`);
+            return null;
+        };
+    };
+
+    //  Функция создания штампа
+    function createDocStamp(doc, pageWidth, pageHeight, options = {}) {
+        const {
+            data,
+            title = '',
+            designation = '',
+            scale = '1:1',
+            sheet = '1',
+            totalSheets = '1',
+            margin = 5 * mm,
+            fontSize = 8,
+            font = 'Arial'
+        } = options;
+
+        // Твои размеры
+        const ch = 7 * mm;
+        const cw = 99 * mm;
+        const squareSize = 21 * mm;
+
+        // Координаты правого нижнего угла штампа
+        let x = pageWidth - margin - cw - squareSize;
+        let y = pageHeight - margin - ch * 3;
+
+        //  Название чертежа
+        drawCell(doc, {
+            x: x,
+            y: y,
+            width: cw,
+            height: ch,
+            text: `Сборочный чертеж на ${data.auName}`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            borderWidth: 1.5,
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Название проекта / обозначение изделия в проекте
+        drawCell(doc, {
+            x: pageWidth - margin - 45 * mm,
+            y: margin,
+            width: 45 * mm,
+            height: 7 * mm,
+            text: `${data.prjName} / ${data.sign}`,
+            fontName: font,
+            fontSize: fontSize + 4,
+            bold: true,
+            borderWidth: 1.5,
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Название модели
+        drawCell(doc, {
+            x: x,
+            y: y + ch,
+            width: cw,
+            height: ch,
+            text: `${data.modelName}`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            borderWidth: 1.5,
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Дата печати отчетов
+        drawCell(doc, {
+            x: x,
+            y: y + 2 * ch,
+            width: cw - 24 * mm,
+            height: ch,
+            text: `Дата печати: ${formatDate(new Date())} г.`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            borderWidth: 1.5,
+            align: 'center',
+            valign: 'center'
+        });
+
+        // Квадрат справа от штампа
+        drawCell(doc, {
+            x: pageWidth - margin - squareSize,
+            y: pageHeight - margin - squareSize,
+            width: squareSize,
+            height: squareSize,
+            text: '',
+            fontName: font,
+            showBorder: true,
+            borderWidth: 1.5
+        });
+    };
+
+    //  Функция создания листа
+    function createDrawingSheet(doc, options = {}) {
+        const {
+            data,
+            title = '',
+            margin = 5 * mm,
+            borderWidth = 1.5,
+            orientation = 'landscape',
+            isFirstPage = false,
+            fontName = 'Arial',
+            designation = '',
+            scale = '1:1',
+            sheet = '1',
+            totalSheets = '1'
+        } = options;
+
+        if (!isFirstPage) {
+            doc.addPage({
+                size: 'A4',
+                layout: orientation,
+                margin: 0
+            });
+        }
+
+        const pageWidth = doc.page.width;
+        const pageHeight = doc.page.height;
+
+        // 1. Основна рамка
+        doc.save();
+        doc.lineWidth(borderWidth)
+            .rect(margin, margin, pageWidth - margin * 2, pageHeight - margin * 2)
+            .stroke('#000000');
+        doc.restore();
+
+        //  2. Штамп
+        createDocStamp(doc, pageWidth, pageHeight, {
+            data: data,
+            title: title,
+            designation: designation,
+            scale: scale,
+            sheet: sheet,
+            totalSheets: totalSheets,
+            margin: margin,
+            font: fontName,
+            fontSize: 8
+        });
+
+        //  3. Чертеж
+        const drawWidth = (120 - 5) * mm;
+        addImageFixedWidth(doc, {
+            x: pageWidth - drawWidth - margin - 5 * mm,
+            y: margin + (5 + 7) * mm,
+            width: drawWidth,
+            imagePath: path.join(
+                settings.drawDIR,
+                'png',
+                data.drawName + '.png'
+            )
+        });
+
+        //  4. Таблица деталей
+
+    };
+
+    //  Функция сохранения документа
+    function savePDF(doc, filePath) {
+        return new Promise((resolve, reject) => {
+            const writeStream = fs.createWriteStream(filePath);
+            doc.pipe(writeStream);
+
+            writeStream.on('finish', () => {
+                resolve();
+            });
+
+            writeStream.on('error', (err) => {
+                reject(err);
+            });
+
+            doc.end();
+        });
+    };
+
+    //  Создаем сборочные чертежи по изделиям
+    for (const array of assembly_array) {
+        if (!array || array.length === 0) continue;
+
+        const doc = new PDFDocument({
+            size: 'A4',
+            layout: 'landscape',
+            margin: 0
+        });
+
+        // Регистрируем шрифты с поддержкой стилей
+        try {
+            doc.registerFont('Arial', 'C:/Windows/Fonts/arial.ttf');
+            doc.registerFont('Arial-Bold', 'C:/Windows/Fonts/arialbd.ttf');
+            doc.registerFont('Arial-Italic', 'C:/Windows/Fonts/ariali.ttf');
+            doc.registerFont('Arial-BoldItalic', 'C:/Windows/Fonts/arialbi.ttf');
+        } catch (err) {
+            console.error('❌ Ошибка регистрации шрифтов:', err.message);
+        };
+
+        const docName = array[0].modelDrawName || array[0].sign || 'Чертежи';
+        const filePath = path.join(FOLDER, SW_FOLDER, `${docName}.pdf`);
+
+        const pdfDir = path.join(FOLDER, SW_FOLDER);
+        if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+
+        for (let i = 0; i < array.length; i++) {
+            const aUnit = array[i];
+
+            createDrawingSheet(doc, {
+                data: aUnit,
+                title: aUnit.drawName || `Чертеж ${i + 1}`,
+                margin: 5 * mm,
+                orientation: 'landscape',
+                isFirstPage: i === 0,
+                fontName: fontName,
+                designation: aUnit.sign || '',
+                scale: aUnit.scale || '1:1',
+                sheet: String(i + 1),
+                totalSheets: String(array.length)
+            });
+        };
+        await savePDF(doc, filePath);
+    };
+    console.log('✅ Все PDF документы созданы!');
+}
+
 //=== Стлизация таблиц =======================================================//
 
 //  Функция стилизации строк таблицы
@@ -3879,7 +4283,8 @@ async function main() {
                 //  Тут нужна функция конвертации в PNG
 
                 //  Запуск функции создания документа
-                await createAssemblyDrawings(assembly_array, settings);
+                //await createAssemblyDrawings(assembly_array, settings);
+                await createPDFAssemblyDrawings(assembly_array, settings);
 
             } catch (e) {
                 errFinish('Ошибка создания сборочных чертежей: ' + e.message);
