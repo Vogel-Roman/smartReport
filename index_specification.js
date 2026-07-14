@@ -818,8 +818,15 @@ function panelProcessing(panel, modelData) {
     const ms = modelData.sign;
 
     //  Размеры панели
-    const w = round(panel.ContourWidth, 1);
-    const h = round(panel.ContourHeight, 1);
+    let w = round(panel.ContourWidth, 1);
+    let h = round(panel.ContourHeight, 1);
+
+    if (panel.TextureOrientation == 2) {
+        //  Изменено направление текстуры
+        w = round(panel.ContourHeight, 1);
+        h = round(panel.ContourWidth, 1);
+    };
+
 
     //  Площадь панели в метрах
     const panelArea = round(w * h * 0.000001, 2)
@@ -855,7 +862,7 @@ function panelProcessing(panel, modelData) {
     //  Информация о облицовки пласти
     const plasticInfoArray = findPanelPlasticList(panel);
 
-    const materialName = panel.MaterialName.trim()
+    const materialName = panel.MaterialName.trim();
 
     modelData.data.panelMaterials.push({
         name: panel.Name,               //  Имя панели
