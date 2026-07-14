@@ -644,6 +644,18 @@ function getAdaptiveRowHeight(baseHeight, scale) {
     return Math.max(result, 8); // Минимальная высота 8pt
 };
 
+//  Функция поиска сборочной единицы элемента модели
+function findAssemblyUnitID(item) {
+    let elem = item.Owner;
+    while (elem) {
+        elem = elem.Owner;
+        if (elem && elem.IsAssemblyUnit && elem.Owner instanceof TModel3D) {
+            return { UID: elem.UID, name: elem.Name }
+        };
+    };
+    return undefined;
+};
+
 //#endregion
 
 //#region Функции рекурсивного обхода
@@ -663,7 +675,6 @@ function forEachInList(list, func, data) {
 
 //  Call-back функция
 function callbackFunc(item, data) {
-
     if (item instanceof TFurnPanel) {
         //  Панель
         panelProcessing(item, data);
@@ -677,7 +688,6 @@ function callbackFunc(item, data) {
         //  Поиск дополнительных материалов к блоку или полуфабрикату
         findAdditionalMaterials(item, data);
     };
-
 };
 
 //  Функция получения данных файлов Проекта
@@ -759,13 +769,23 @@ function getAssemblyName(list, prj_item) {
             const delimPrjSign = settings.delimPrjSign;
             const modelDrawName = `${prjName}${delimPrjName}${sign}_SB`;
             const drawName = `${modelDrawName}_na_${sbName}`;
+
+            const UID = item.UID;
+            let panelMaterialsAU = prj_item.data.panelMaterials.filter(item => {
+                return item.assemblyUnit && item.assemblyUnit.UID === UID;
+            });
+
             result.push({
                 prjName: PROJECT_NAME,
+                items: {
+                    panelMaterials: panelMaterialsAU
+                },
                 sign: prj_item.sign,
                 drawName: drawName,             //  Название СБ (тр-лит.)
                 auName: item.Name,              //  Название СБ
                 modelName: prj_item.modelName,  //  Название модели
                 modelDrawName: modelDrawName    //  Название схемы сборки (тр-лит.)
+
             });
         };
     };
@@ -779,6 +799,9 @@ function getAssemblyName(list, prj_item) {
 //  Функция обработки данных панели
 function panelProcessing(panel, modelData) {
     const material = getMaterialName(panel.MaterialName);
+
+    //  Сборочная единица элемента
+    const AssemblyUnit = findAssemblyUnitID(panel);
 
     //  Поиск дополнительных материалов к панели
     findAdditionalMaterials(panel, modelData);
@@ -858,6 +881,7 @@ function panelProcessing(panel, modelData) {
         buttInfo: buttInfoArray,        //  Массив кромок панели
         cutInfo: cutInfoArray,          //  Массив пазов панели
         drillInfo: drillInfoArray,      //  Массив отверстий панели
+        assemblyUnit: AssemblyUnit      //  Сборочная единица
     });
 
     //  Обработка массива облицовки панели
@@ -905,6 +929,7 @@ function panelProcessing(panel, modelData) {
             buttInfo: [],                   //  Массив кромок панели
             cutInfo: [],                    //  Массив пазов панели
             drillInfo: [],                  //  Массив отверстий панели
+            assemblyUnit: AssemblyUnit      //  Сборочная единица
         });
     };
 };
@@ -3733,6 +3758,32 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
     const mm = 2.83465;
     const fontName = 'Arial';
 
+    //  Группировка деталей по позиции и суммированием количество
+    function groupPartsByPos(items, groupField = 'pos') {
+        if (!items || !Array.isArray(items) || items.length === 0) return [];
+        const groups = {};
+        for (const item of items) {
+            const key = item[groupField];
+            if (!key) continue;
+            if (!groups[key]) {
+                // Сохраняем первый встреченный объект, добавляем поле count
+                groups[key] = {
+                    ...item,
+                    count: 0
+                };
+            };
+            // Увеличиваем счетчик
+            groups[key].count += 1;
+        };
+
+        // Преобразуем объект в массив и сортируем по pos
+        return Object.values(groups).sort((a, b) => {
+            const aVal = parseFloat(a[groupField]) || 0;
+            const bVal = parseFloat(b[groupField]) || 0;
+            return aVal - bVal;
+        });
+    };
+
     //  Функция рисует прямоугольник и текст внутри
     function drawCell(doc, options = {}) {
         const {
@@ -3750,20 +3801,59 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             italic = false,
             underline = false,
             strike = false,
-            borderWidth = 0.5,
+            border = [0, 0, 0, 0],          // [верх, низ, лево, право]
             borderColor = '#000000',
-            showBorder = true,
-            padding = 2
+            padding = 2,
+            fillColor = null                // Цвет заливки
         } = options;
 
         doc.save();
 
-        // Рисуем рамку
-        if (showBorder) {
-            doc.lineWidth(borderWidth)
+        // Заливка фона
+        if (fillColor) {
+            doc.fillColor(fillColor)
                 .rect(x, y, width, height)
-                .stroke(borderColor);
+                .fill();
         }
+
+        // Рисуем рамку
+
+        if (border && Array.isArray(border) && border.length === 4) {
+            // Индивидуальные толщины для каждой стороны
+            const [top, bottom, left, right] = border;
+
+            // Верхняя граница
+            if (top > 0) {
+                doc.lineWidth(top)
+                    .moveTo(x, y)
+                    .lineTo(x + width, y)
+                    .stroke(borderColor);
+            };
+
+            // Нижняя граница
+            if (bottom > 0) {
+                doc.lineWidth(bottom)
+                    .moveTo(x, y + height)
+                    .lineTo(x + width, y + height)
+                    .stroke(borderColor);
+            };
+
+            // Левая граница
+            if (left > 0) {
+                doc.lineWidth(left)
+                    .moveTo(x, y)
+                    .lineTo(x, y + height)
+                    .stroke(borderColor);
+            };
+
+            // Правая граница
+            if (right > 0) {
+                doc.lineWidth(right)
+                    .moveTo(x + width, y)
+                    .lineTo(x + width, y + height)
+                    .stroke(borderColor);
+            };
+        };
 
         // Формируем имя шрифта с учетом стилей
         let fontWithStyle = font;
@@ -3926,7 +4016,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize,
             bold: true,
-            borderWidth: 1.5,
+            border: [1.5, 1.5, 1.5, 1.5],
             align: 'center',
             valign: 'center'
         });
@@ -3941,7 +4031,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize + 4,
             bold: true,
-            borderWidth: 1.5,
+            border: [1.5, 1.5, 1.5, 1.5],
             align: 'center',
             valign: 'center'
         });
@@ -3956,7 +4046,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize,
             bold: true,
-            borderWidth: 1.5,
+            border: [1.5, 1.5, 1.5, 1.5],
             align: 'center',
             valign: 'center'
         });
@@ -3971,7 +4061,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize,
             bold: true,
-            borderWidth: 1.5,
+            border: [1.5, 1.5, 1.5, 1.5],
             align: 'center',
             valign: 'center'
         });
@@ -3984,9 +4074,156 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             height: squareSize,
             text: '',
             fontName: font,
-            showBorder: true,
-            borderWidth: 1.5
+            border: [1.5, 1.5, 1.5, 1.5],
         });
+    };
+
+    function createAUPartsTable(doc, options) {
+        const {
+            data,
+            title = '',
+            designation = '',
+            scale = '1:1',
+            sheet = '1',
+            totalSheets = '1',
+            margin = 5 * mm,
+            fontSize = 6,
+            font = 'Arial'
+        } = options;
+
+        let x = 10 * mm;
+        let y = 10 * mm;
+        const ch = 5 * mm;
+        const cw = 60 * mm;
+
+
+        const b_r = [0.5, 0.5, 0.5, 1];
+        const b_l = [0.5, 0.5, 1, 0.5];
+        const b_cell = [0.5, 0.5, 0.5, 0.5];
+        const b_t = [1, 0.5, 0.5, 0.5];
+        const b_b = [0.5, 1, 0.5, 0.5];
+        const b_tr = [1, 0.5, 0.5, 1];
+        const b_tl = [1, 0.5, 1, 0.5];
+        const b_br = [0.5, 1, 0.5, 1];
+        const b_bl = [0.5, 1, 1, 0.5];
+
+        //  Колонка номера
+        const w1_col = 6 * mm;
+        drawCell(doc, {
+            x: x,
+            y: y,
+            width: w1_col,
+            height: ch,
+            text: `№`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_tl,
+            align: 'center',
+        });
+
+        //  Колонка Pos
+        const w2_col = 15 * mm;
+        drawCell(doc, {
+            x: x + w1_col,
+            y: y,
+            width: w2_col,
+            height: ch,
+            text: `Pos`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_t,
+            align: 'center',
+        });
+
+        //  Колонка наименование
+        const w3_col = 40 * mm;
+        drawCell(doc, {
+            x: x + w1_col + w2_col,
+            y: y,
+            width: w3_col,
+            height: ch,
+            text: `Наименование`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_t,
+            align: 'center',
+        });
+
+        //  Количество
+        const w4_col = 10 * mm;
+        drawCell(doc, {
+            x: x + w1_col + w2_col + w3_col,
+            y: y,
+            width: w4_col,
+            height: ch,
+            text: `Кол-во`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_t,
+            align: 'center',
+        });
+
+        y += ch;
+
+        const panels = groupPartsByPos(data.items.panelMaterials);
+        const array = [...panels];
+
+        for (let i = 0; i < array.length; i++) {
+            const item = array[i];
+
+            drawCell(doc, { //  Колонка номера
+                x: x,
+                y: y + ch * i,
+                width: w1_col,
+                height: ch,
+                text: `${i + 1}`,
+                fontName: font,
+                fontSize: fontSize,
+                border: i == array.length - 1 ? b_bl : b_l,
+                align: 'right',
+            });
+
+            drawCell(doc, { //  Колонка позиции
+                x: x + w1_col,
+                y: y + ch * i,
+                width: w2_col,
+                height: ch,
+                text: `${item.prjPos}`,
+                fontName: font,
+                fontSize: fontSize,
+                border: i == array.length - 1 ? b_b : b_cell,
+                align: 'left',
+            });
+
+            drawCell(doc, { //  Колонка названия детали
+                x: x + w1_col + w2_col,
+                y: y + ch * i,
+                width: w3_col,
+                height: ch,
+                text: `${item.name}`,
+                fontName: font,
+                fontSize: fontSize,
+                border: i == array.length - 1 ? b_b : b_cell,
+                align: 'left',
+            });
+
+            drawCell(doc, { //  Колонка количества
+                x: x + w1_col + w2_col + w3_col,
+                y: y + ch * i,
+                width: w4_col,
+                height: ch,
+                text: `${item.count}`,
+                fontName: font,
+                fontSize: fontSize,
+                border: i == array.length - 1 ? b_b : b_cell,
+                align: 'right',
+            });
+
+        };
     };
 
     //  Функция создания листа
@@ -4050,7 +4287,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         });
 
         //  4. Таблица деталей
-
+        createAUPartsTable(doc, options);
     };
 
     //  Функция сохранения документа
@@ -4071,7 +4308,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         });
     };
 
-    //  Создаем сборочные чертежи по изделиям
+    //  Цикла создания сборочных чертежей по изделиям
     for (const array of assembly_array) {
         if (!array || array.length === 0) continue;
 
@@ -4091,7 +4328,8 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             console.error('❌ Ошибка регистрации шрифтов:', err.message);
         };
 
-        const docName = array[0].modelDrawName || array[0].sign || 'Чертежи';
+        const prju = array[0];
+        const docName = prju.prjName + settings.delimPrjName + prju.sign + '_Сборочные чертежи';
         const filePath = path.join(FOLDER, SW_FOLDER, `${docName}.pdf`);
 
         const pdfDir = path.join(FOLDER, SW_FOLDER);
@@ -4099,10 +4337,9 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
 
         for (let i = 0; i < array.length; i++) {
             const aUnit = array[i];
-
             createDrawingSheet(doc, {
                 data: aUnit,
-                title: aUnit.drawName || `Чертеж ${i + 1}`,
+                title: aUnit.drawName,
                 margin: 5 * mm,
                 orientation: 'landscape',
                 isFirstPage: i === 0,
@@ -4116,7 +4353,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         await savePDF(doc, filePath);
     };
     console.log('✅ Все PDF документы созданы!');
-}
+};
 
 //=== Стлизация таблиц =======================================================//
 
@@ -4236,6 +4473,7 @@ async function main() {
 
             //  Загружаем текущую Модель Проекта
             if (Action.LoadModel(filepath)) {
+
                 //  Рекурсивный обход текущей модели
                 forEachInList(Model, callbackFunc, prj_array[ind]);
 
@@ -4283,7 +4521,6 @@ async function main() {
                 //  Тут нужна функция конвертации в PNG
 
                 //  Запуск функции создания документа
-                //await createAssemblyDrawings(assembly_array, settings);
                 await createPDFAssemblyDrawings(assembly_array, settings);
 
             } catch (e) {
