@@ -818,15 +818,31 @@ function panelProcessing(panel, modelData) {
     const ms = modelData.sign;
 
     //  Размеры панели
-    let w = round(panel.ContourWidth, 1);
-    let h = round(panel.ContourHeight, 1);
+    const w = round(panel.ContourWidth, 1);
+    const h = round(panel.ContourHeight, 1);
+
+    //  Размеры панели
+    let w_contour = panel.ContourWidth;
+    let h_contour = panel.ContourHeight;
 
     if (panel.TextureOrientation == 2) {
         //  Изменено направление текстуры
-        w = round(panel.ContourHeight, 1);
-        h = round(panel.ContourWidth, 1);
+        w_contour = panel.ContourHeight;
+        h_contour = panel.ContourWidth;
     };
 
+    //  Цикл на определение обозначения кромок L1L2 W1W2
+    const ll = [];
+    const ww = [];
+    for (let i = 0; i < panel.Contours[0].Count; i++) {
+        const contuor = panel.Contours[0][i];
+        if (contuor.IsLine() && contuor.ObjLength() >= w_contour * 0.8) {
+            if (contuor.Data) ll.push(contuor.Data.Butt ? contuor.Data.Butt.Thickness : 0);
+        } else if (contuor.IsLine() && contuor.ObjLength() >= h_contour * 0.8) {
+            if (contuor.Data) ww.push(contuor.Data.Butt ? contuor.Data.Butt.Thickness : 0);
+        };
+    };
+    const llww = [...ll, ...ww];
 
     //  Площадь панели в метрах
     const panelArea = round(w * h * 0.000001, 2)
@@ -892,6 +908,7 @@ function panelProcessing(panel, modelData) {
         drillInfo: drillInfoArray,      //  Массив отверстий панели
         assemblyUnit: AssemblyUnit,     //  Сборочная единица
         tkn: panel.ZThickness,          //  Толщина детали по Z
+        llww: llww,                     //  Информация о кромке на детали
         isPlastic: false
     });
 
@@ -3828,7 +3845,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             const bVal = parseFloat(b[groupField]) || 0;
             return aVal - bVal;
         });
-    }
+    };
 
     //  Функция рисует прямоугольник и текст внутри
     function drawCell(doc, options = {}) {
@@ -3847,10 +3864,16 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             italic = false,
             underline = false,
             strike = false,
-            border = [0, 0, 0, 0],          // [верх, низ, лево, право]
+            border = [0, 0, 0, 0],      // [верх, низ, лево, право]
             borderColor = '#000000',
             padding = 2,
-            fillColor = null                // Цвет заливки
+            fillColor = null,           // Цвет заливки
+            buttInfo = [],              // [верхняя_линия, нижняя_линия]
+            buttOffsetTop = 0.5,        // Смещение верхней линии от верха ячейки (в пунктах)
+            buttOffsetBottom = 0.5,     // Смещение нижней линии от низа ячейки (в пунктах)
+            buttLineWidth = 0.6,        // Ширина линии (в процентах от ширины ячейки)
+            buttDashLength = 2,         // Длина штриха для пунктира
+            buttDashSpace = 2           // Длина пробела для пунктира
         } = options;
 
         doc.save();
@@ -3863,12 +3886,9 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         }
 
         // Рисуем рамку
-
         if (border && Array.isArray(border) && border.length === 4) {
-            // Индивидуальные толщины для каждой стороны
             const [top, bottom, left, right] = border;
 
-            // Верхняя граница
             if (top > 0) {
                 doc.lineWidth(top)
                     .moveTo(x, y)
@@ -3876,7 +3896,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     .stroke(borderColor);
             };
 
-            // Нижняя граница
             if (bottom > 0) {
                 doc.lineWidth(bottom)
                     .moveTo(x, y + height)
@@ -3884,7 +3903,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     .stroke(borderColor);
             };
 
-            // Левая граница
             if (left > 0) {
                 doc.lineWidth(left)
                     .moveTo(x, y)
@@ -3892,7 +3910,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     .stroke(borderColor);
             };
 
-            // Правая граница
             if (right > 0) {
                 doc.lineWidth(right)
                     .moveTo(x + width, y)
@@ -3900,6 +3917,26 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     .stroke(borderColor);
             };
         };
+
+        // Рисуем линии buttInfo (сверху и снизу текста)
+        if (buttInfo && Array.isArray(buttInfo) && buttInfo.length > 0) {
+            const lineWidth_ = width * (buttLineWidth || 0.7);
+            const startX = x + (width - lineWidth_) / 2;
+
+            // Верхняя линия (buttInfo[0])
+            if (buttInfo[0] !== undefined && buttInfo[0] !== null) {
+                const value = buttInfo[0];
+                const yLine = y + padding + (buttOffsetTop || 0);
+                drawButtLine(doc, startX, yLine, lineWidth_, value, borderColor, buttDashLength, buttDashSpace);
+            }
+
+            // Нижняя линия (buttInfo[1])
+            if (buttInfo[1] !== undefined && buttInfo[1] !== null) {
+                const value = buttInfo[1];
+                const yLine = y + height - padding - (buttOffsetBottom || 0);
+                drawButtLine(doc, startX, yLine, lineWidth_, value, borderColor, buttDashLength, buttDashSpace);
+            }
+        }
 
         // Формируем имя шрифта с учетом стилей
         let fontWithStyle = font;
@@ -3919,10 +3956,34 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         let textX = x + padding;
         let textY = y + padding;
 
+        // Корректируем textY если есть верхняя линия
+        if (buttInfo && buttInfo.length > 0 && buttInfo[0] !== undefined && buttInfo[0] !== null) {
+            const topLineOffset = 4 + (buttOffsetTop || 0);
+            textY = y + padding + topLineOffset;
+        }
+
         if (valign === 'center') {
             textY = y + height / 2;
+            if (buttInfo && buttInfo.length > 0) {
+                const hasTop = buttInfo[0] !== undefined && buttInfo[0] !== null;
+                const hasBottom = buttInfo[1] !== undefined && buttInfo[1] !== null;
+                const topOffset = buttOffsetTop || 0;
+                const bottomOffset = buttOffsetBottom || 0;
+
+                if (hasTop && hasBottom) {
+                    textY = y + height / 2 + (topOffset - bottomOffset) / 2;
+                } else if (hasTop) {
+                    textY = y + height / 2 + topOffset + 3;
+                } else if (hasBottom) {
+                    textY = y + height / 2 - bottomOffset - 3;
+                }
+            }
         } else if (valign === 'bottom') {
             textY = y + height - padding;
+            if (buttInfo && buttInfo.length > 0 && buttInfo[1] !== undefined && buttInfo[1] !== null) {
+                const bottomLineOffset = 4 + (buttOffsetBottom || 0);
+                textY = y + height - padding - bottomLineOffset;
+            }
         }
 
         const textWidth = width - padding * 2;
@@ -3956,14 +4017,14 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 font: fontWithStyle
             });
 
-            const lineWidth = Math.min(textWidth_, textWidth);
+            const lineWidth_ = Math.min(textWidth_, textWidth);
 
             if (underline) {
                 const lineY = valign === 'center' ?
                     textY + fontSize * 0.15 :
                     textY + fontSize * 0.8;
                 doc.moveTo(textX, lineY)
-                    .lineTo(textX + lineWidth, lineY)
+                    .lineTo(textX + lineWidth_, lineY)
                     .stroke(fontColor);
             }
 
@@ -3972,12 +4033,52 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     textY :
                     textY + fontSize * 0.4;
                 doc.moveTo(textX, strikeY)
-                    .lineTo(textX + lineWidth, strikeY)
+                    .lineTo(textX + lineWidth_, strikeY)
                     .stroke(fontColor);
             }
         }
 
         doc.restore();
+    };
+
+    /**
+     * Рисует линию в зависимости от значения
+     * @param {PDFDocument} doc - экземпляр PDF документа
+     * @param {number} x - координата X начала линии
+     * @param {number} y - координата Y линии
+     * @param {number} width - ширина линии
+     * @param {number} value - значение для определения типа линии
+     * @param {string} color - цвет линии
+     * @param {number} dashLength - длина штриха для пунктира
+     * @param {number} dashSpace - длина пробела для пунктира
+     */
+    function drawButtLine(doc, x, y, width, value, color = '#000000', dashLength = 2, dashSpace = 2) {
+        if (value > 0 && value <= 0.5) {
+            // Пунктирная линия
+            doc.save();
+            doc.lineWidth(0.5)
+                .dash(dashLength, { space: dashSpace })
+                .moveTo(x, y)
+                .lineTo(x + width, y)
+                .stroke(color);
+            doc.restore();
+        } else if (value > 0.5 && value <= 1.5) {
+            // Тонкая сплошная (0.5)
+            doc.save();
+            doc.lineWidth(0.5)
+                .moveTo(x, y)
+                .lineTo(x + width, y)
+                .stroke(color);
+            doc.restore();
+        } else if (value > 1.5) {
+            // Толстая сплошная (1.0)
+            doc.save();
+            doc.lineWidth(1.0)
+                .moveTo(x, y)
+                .lineTo(x + width, y)
+                .stroke(color);
+            doc.restore();
+        }
     };
 
     //  Функция вставки изображения
@@ -4124,6 +4225,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         });
     };
 
+    //  Таблица деталей сборочной единицы
     function createAUPartsTable(doc, options) {
         const {
             data,
@@ -4310,6 +4412,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     fontSize: fontSize,
                     border: i == array.length - 1 ? b_b : b_cell,
                     align: 'center',
+                    buttInfo: item.llww ? [item.llww[0], item.llww[1]] : [],
                 });
                 drawCell(doc, { //  Колонка длины – width
                     x: x + w1_col + w2_col + w3_col + w4_col + w5_col / 2,
@@ -4321,6 +4424,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                     fontSize: fontSize,
                     border: i == array.length - 1 ? b_b : b_cell,
                     align: 'center',
+                    buttInfo: item.llww ? [item.llww[2], item.llww[3]] : [],
                 });
             };
 
