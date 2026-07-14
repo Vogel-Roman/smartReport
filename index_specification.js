@@ -855,9 +855,11 @@ function panelProcessing(panel, modelData) {
     //  Информация о облицовки пласти
     const plasticInfoArray = findPanelPlasticList(panel);
 
+    const materialName = panel.MaterialName.trim()
+
     modelData.data.panelMaterials.push({
         name: panel.Name,               //  Имя панели
-        material: panel.MaterialName,   //  Материал панели
+        material: materialName,         //  Материал панели
         materialID: undefined,          //  ID Материала (DB)
         materialName: material[0],      //  Имя материала панели
         materialArticle: material[1],   //  Артикул материала панели
@@ -881,7 +883,9 @@ function panelProcessing(panel, modelData) {
         buttInfo: buttInfoArray,        //  Массив кромок панели
         cutInfo: cutInfoArray,          //  Массив пазов панели
         drillInfo: drillInfoArray,      //  Массив отверстий панели
-        assemblyUnit: AssemblyUnit      //  Сборочная единица
+        assemblyUnit: AssemblyUnit,     //  Сборочная единица
+        tkn: panel.ZThickness,          //  Толщина детали по Z
+        isPlastic: false
     });
 
     //  Обработка массива облицовки панели
@@ -907,7 +911,7 @@ function panelProcessing(panel, modelData) {
             name: plsName,                  //  Имя панели
             material: pls.material,         //  Материал панели
             materialID: undefined,          //  ID Материала (DB)
-            materialName: mat[0],           //  Имя материала панели
+            materialName: mat[0].trim(),    //  Имя материала панели
             materialArticle: mat[1],        //  Артикул материала панели
             materialSyncExternal: "",       //  Код синхронизации материала (DB)
             materialPrice: 0,               //  Цена из базы данных (DB)
@@ -929,7 +933,9 @@ function panelProcessing(panel, modelData) {
             buttInfo: [],                   //  Массив кромок панели
             cutInfo: [],                    //  Массив пазов панели
             drillInfo: [],                  //  Массив отверстий панели
-            assemblyUnit: AssemblyUnit      //  Сборочная единица
+            assemblyUnit: AssemblyUnit,     //  Сборочная единица
+            tkn: panel.ZThickness,          //  Толщина детали по Z
+            isPlastic: true,
         });
     };
 };
@@ -3758,13 +3764,46 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
     const mm = 2.83465;
     const fontName = 'Arial';
 
+    // //  Группировка деталей по позиции и суммированием количество
+    // function groupPartsByPos(items, groupField = 'pos') {
+    //     if (!items || !Array.isArray(items) || items.length === 0) return [];
+    //     const groups = {};
+    //     for (const item of items) {
+    //         const key = item[groupField];
+    //         if (!key) continue;
+    //         if (!groups[key]) {
+    //             // Сохраняем первый встреченный объект, добавляем поле count
+    //             groups[key] = {
+    //                 ...item,
+    //                 count: 0
+    //             };
+    //         };
+    //         // Увеличиваем счетчик
+    //         groups[key].count += 1;
+    //     };
+
+    //     // Преобразуем объект в массив и сортируем по pos
+    //     return Object.values(groups).sort((a, b) => {
+    //         const aVal = parseFloat(a[groupField]) || 0;
+    //         const bVal = parseFloat(b[groupField]) || 0;
+    //         return aVal - bVal;
+    //     });
+    // };
+
     //  Группировка деталей по позиции и суммированием количество
     function groupPartsByPos(items, groupField = 'pos') {
         if (!items || !Array.isArray(items) || items.length === 0) return [];
+
         const groups = {};
         for (const item of items) {
             const key = item[groupField];
             if (!key) continue;
+
+            // Проверяем: если в конце наименования есть _любая_буква - пропускаем
+            if (item.name && /_[а-яА-Яa-zA-Z]$/.test(item.name)) {
+                continue; // Пропускаем эту деталь
+            }
+
             if (!groups[key]) {
                 // Сохраняем первый встреченный объект, добавляем поле count
                 groups[key] = {
@@ -3782,7 +3821,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             const bVal = parseFloat(b[groupField]) || 0;
             return aVal - bVal;
         });
-    };
+    }
 
     //  Функция рисует прямоугольник и текст внутри
     function drawCell(doc, options = {}) {
@@ -4138,7 +4177,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         });
 
         //  Колонка наименование
-        const w3_col = 40 * mm;
+        const w3_col = 45 * mm;
         drawCell(doc, {
             x: x + w1_col + w2_col,
             y: y,
@@ -4167,6 +4206,36 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             align: 'center',
         });
 
+        //  Размеры
+        const w5_col = 20 * mm;
+        drawCell(doc, {
+            x: x + w1_col + w2_col + w3_col + w4_col,
+            y: y,
+            width: w5_col,
+            height: ch,
+            text: `Размеры, мм`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_t,
+            align: 'center',
+        });
+
+        //  Материал
+        const w6_col = 60 * mm;
+        drawCell(doc, {
+            x: x + w1_col + w2_col + w3_col + w4_col + w5_col,
+            y: y,
+            width: w6_col,
+            height: ch,
+            text: `Материал`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: b_tr,
+            align: 'center',
+        });
+
         y += ch;
 
         const panels = groupPartsByPos(data.items.panelMaterials);
@@ -4174,7 +4243,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
 
         for (let i = 0; i < array.length; i++) {
             const item = array[i];
-
+            let material = item.materialName;   //  Наименованеи материала
             drawCell(doc, { //  Колонка номера
                 x: x,
                 y: y + ch * i,
@@ -4204,7 +4273,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 y: y + ch * i,
                 width: w3_col,
                 height: ch,
-                text: `${item.name}`,
+                text: `${item.name}${item.tkn ? ' (' + item.tkn + ')' : ''}`,
                 fontName: font,
                 fontSize: fontSize,
                 border: i == array.length - 1 ? b_b : b_cell,
@@ -4221,6 +4290,49 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 fontSize: fontSize,
                 border: i == array.length - 1 ? b_b : b_cell,
                 align: 'right',
+            });
+
+            if (item.height && item.width) { // Для панелей
+                drawCell(doc, { //  Колонка длины – width
+                    x: x + w1_col + w2_col + w3_col + w4_col,
+                    y: y + ch * i,
+                    width: w5_col / 2,
+                    height: ch,
+                    text: `${item.width}`,
+                    fontName: font,
+                    fontSize: fontSize,
+                    border: i == array.length - 1 ? b_b : b_cell,
+                    align: 'center',
+                });
+                drawCell(doc, { //  Колонка длины – width
+                    x: x + w1_col + w2_col + w3_col + w4_col + w5_col / 2,
+                    y: y + ch * i,
+                    width: w5_col / 2,
+                    height: ch,
+                    text: `${item.height}`,
+                    fontName: font,
+                    fontSize: fontSize,
+                    border: i == array.length - 1 ? b_b : b_cell,
+                    align: 'center',
+                });
+            };
+
+            if (i > 0 && material === array[i - 1].materialName) {
+                material = '';
+            } else {
+                material = array[i].materialName;
+            };
+
+            drawCell(doc, { //  Колонка материала
+                x: x + w1_col + w2_col + w3_col + w4_col + w5_col,
+                y: y + ch * i,
+                width: w6_col,
+                height: ch,
+                text: `${material}`.substring(0, 48) + `${material.length ? '…' : ''}`,
+                fontName: font,
+                fontSize: fontSize,
+                border: i == array.length - 1 ? b_br : b_r,
+                align: 'left',
             });
 
         };
