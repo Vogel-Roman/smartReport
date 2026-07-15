@@ -13,6 +13,8 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const QRCode = require("qrcode");
+// const crypto = require('crypto');
 const { XMLParser } = require('fast-xml-parser');
 
 //#region Инициализация
@@ -23,6 +25,7 @@ const BUTT_ARRAY = [];          //  Массив названий кромочн
 const PROFILE_ARRAY = [];       //  Массив названий профильных материалов
 const FURNITURE_ARRAY = [];     //  Массив названий фурнитуры
 const ID_MAT_ARRAY = [];        //  Массив ID материалов
+const TEMP_DIR = path.join(__dirname, 'temp');  // Путь к временной папке
 
 // Допуск для сравнения с нулем
 const EPS = 1e-10;
@@ -661,6 +664,15 @@ function findAssemblyUnitID(item) {
     return undefined;
 };
 
+//  Функция получения пользовательского свойства Модели
+function getUserProderty(obj, propName) {
+    if (obj.UserProperty[propName]) {
+        return obj.UserProperty[propName]
+    } else {
+        return '';
+    }
+};
+
 //#endregion
 
 //#region Функции рекурсивного обхода
@@ -785,6 +797,7 @@ function getAssemblyName(list, prj_item) {
                 items: {
                     panelMaterials: panelMaterialsAU
                 },
+                cloudLink: prj_item.cloudLink,   //  Ссылка на облако
                 sign: prj_item.sign,
                 drawName: drawName,             //  Название СБ (тр-лит.)
                 auName: item.Name,              //  Название СБ
@@ -4413,8 +4426,152 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         createAUPartsTable(doc, options);
     };
 
+    async function addQRCode(doc, options = {}) {
+        const {
+            data,
+            x,
+            y,
+            size = 20,
+            color = '#000000',
+            backgroundColor = '#FFFFFF',
+            margin = 1,
+            errorCorrectionLevel = 'M',
+            debug = false,
+            debugColor = '#E8F4FD',
+            debugBorderColor = '#4A90D9'
+        } = options;
+
+        if (!data) {
+            console.warn('⚠️ Нет данных для QR-кода');
+            return null;
+        }
+
+        // Создаем временную папку, если её нет
+        function ensureTempDir() {
+            if (!fs.existsSync(TEMP_DIR)) {
+                fs.mkdirSync(TEMP_DIR, { recursive: true });
+                console.log('📁 Создана временная папка:', TEMP_DIR);
+            }
+        }
+
+        /**
+         * Генерирует уникальное имя файла
+         */
+        function generateTempFileName() {
+            const timestamp = Date.now();
+            const random = Math.floor(Math.random() * 10000);
+            return `qr_${timestamp}_${random}.png`;
+        }
+
+        ensureTempDir();
+
+        // Генерируем уникальное имя файла
+        const fileName = generateTempFileName();
+        const filePath = path.join(TEMP_DIR, fileName);
+
+        try {
+            // Генерируем QR-код и сохраняем в файл
+            await QRCode.toFile(filePath, data, {
+                errorCorrectionLevel: errorCorrectionLevel,
+                margin: margin,
+                color: {
+                    dark: color,
+                    light: backgroundColor
+                },
+                width: size * 4
+            });
+
+            // Проверяем, создался ли файл
+            if (!fs.existsSync(filePath)) {
+                throw new Error('Файл не создан');
+            }
+
+            // В режиме отладки рисуем контейнер
+            if (debug) {
+                doc.save();
+                doc.fillColor(debugColor)
+                    .rect(x, y, size, size)
+                    .fill();
+                doc.lineWidth(0.5)
+                    .rect(x, y, size, size)
+                    .stroke(debugBorderColor);
+                doc.restore();
+            }
+
+            // Добавляем QR-код из файла
+            doc.image(filePath, {
+                x: x,
+                y: y,
+                width: size,
+                height: size
+            });
+
+            // В режиме отладки добавляем информацию
+            if (debug) {
+                doc.save();
+                doc.fontSize(5)
+                    .font('Helvetica')
+                    .fillColor('#666666')
+                    .text(
+                        `QR: ${data.length} симв.`,
+                        x,
+                        y + size + 1,
+                        { width: size, align: 'center' }
+                    );
+                doc.restore();
+            }
+
+            // Удаляем временный файл
+            try {
+                fs.unlinkSync(filePath);
+                if (debug) {
+                    console.log(`🗑️ Удален временный файл: ${fileName}`);
+                }
+            } catch (unlinkErr) {
+                // Если не удалось удалить - просто логируем
+                console.warn(`⚠️ Не удалось удалить файл: ${fileName}`);
+            }
+
+            return {
+                x: x,
+                y: y,
+                size: size,
+                data: data
+            };
+        } catch (err) {
+            console.error(`❌ Ошибка генерации QR-кода: ${err.message}`);
+
+            // Если файл создался, но была ошибка - удаляем
+            if (fs.existsSync(filePath)) {
+                try {
+                    fs.unlinkSync(filePath);
+                } catch (e) { }
+            }
+
+            if (debug) {
+                doc.save();
+                doc.fillColor('#FFE8E8')
+                    .rect(x, y, size, size)
+                    .fill();
+                doc.lineWidth(0.5)
+                    .rect(x, y, size, size)
+                    .stroke('#D94A4A');
+                doc.fontSize(6)
+                    .font('Helvetica')
+                    .fillColor('#666666')
+                    .text('❌ QR Error', x + 2, y + size / 2 - 3, {
+                        width: size - 4,
+                        align: 'center',
+                        baseline: 'middle'
+                    });
+                doc.restore();
+            }
+            return null;
+        }
+    }
+
     //  Функция создания листа схемы сборки
-    function createUnionDrawingSheet(doc, options = {}) {
+    async function createUnionDrawingSheet(doc, options = {}) {
         const {
             data,
             title = 'Схема сборки',
@@ -4463,7 +4620,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         const drawHeight = pageHeight - 60 * mm
         addImageFixedWidth(doc, {
             x: 2 * margin,
-            y: margin + (21) * mm,
+            y: margin + (24) * mm,
             containerWidth: drawWidth,
             containerHeight: drawHeight,
             imagePath: path.join(
@@ -4472,6 +4629,17 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 data.drawName + '.png'
             )
         });
+
+        if (data.cloudLink) {
+            await addQRCode(doc, {
+                data: data.cloudLink,
+                x: margin + 5 * mm,
+                y: margin + 5 * mm,
+                size: 20 * mm,
+                debug: false
+            });
+
+        };
     };
 
     //  Функция сохранения документа
@@ -4520,12 +4688,13 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             counter++;
             const sbData = array[0];
             // Запускаем создание общего сборочного чертежа
-            createUnionDrawingSheet(doc, {
+            await createUnionDrawingSheet(doc, {
                 data: {
                     prjName: sbData.prjName,
                     drawName: sbData.modelDrawName,
                     modelName: sbData.modelName,
                     sign: sbData.sign,
+                    cloudLink: sbData.cloudLink,
                 },
                 title: 'Схема сборки',
                 margin: 5 * mm,
@@ -4536,8 +4705,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 sheet: String(1),
                 totalSheets: String(array.length + counter)
             });
-
-
         };
 
         for (let i = 0; i < array.length; i++) {
@@ -4688,6 +4855,9 @@ async function main() {
                 //  Добавляем наименование заказа в данные
                 prj_array[ind].modelName = Article.Name;
                 count++;
+
+                // Проверяем есть ли свойство CloudLink у модели
+                prj_array[ind].cloudLink = getUserProderty(Model, 'CloudLink');
 
                 //  Обход блоков сборочных единиц 1 уровня
                 let arr = getAssemblyName(Model.AsList(), prj_array[ind]);
