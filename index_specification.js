@@ -3715,17 +3715,28 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
     //  Функция вставки изображения
     function addImageFixedWidth(doc, options = {}) {
         const {
-            imagePath,          //  путь к изображению
-            x,                  //  координата X верхнего левого угла
-            y,                  //  координата Y верхнего левого угла
-            width,              //  ширина изображения (фиксированная)
-            align = 'left',     //  'center', 'left', 'right'
-            valign = 'top'      //  'center', 'top', 'bottom'
+            imagePath,
+            x,
+            y,
+            containerWidth,
+            containerHeight,
+            fit = 'contain',
+            align = 'center',
+            valign = 'center',
+            debug = false,                      // Включить режим отладки
+            debugColor = '#E8F4FD',           // Цвет фона (бледно-голубой)
+            debugBorderColor = '#4A90D9',     // Цвет рамки
+            debugBorderWidth = 0.5              // Толщина рамки
         } = options;
 
         // Проверяем существование файла
         if (!imagePath || !fs.existsSync(imagePath)) {
             console.warn(`⚠️ Изображение не найдено: ${imagePath}`);
+
+            // В режиме отладки показываем пустой контейнер
+            if (debug && containerWidth && containerHeight) {
+                drawDebugContainer(doc, x, y, containerWidth, containerHeight, debugColor, debugBorderColor, debugBorderWidth, '❌ Изображение не найдено');
+            }
             return null;
         };
 
@@ -3738,27 +3749,129 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             const imageWidth = dimensions.width;
             const imageHeight = dimensions.height;
 
-            // Вычисляем масштаб по ширине
-            const scale = width / imageWidth;
-            const height = Math.floor(imageHeight * scale);
+            let finalWidth, finalHeight;
+            let offsetX = 0, offsetY = 0;
 
-            // Добавляем изображение
+            // Если задана высота контейнера - вписываем в контейнер
+            if (containerHeight) {
+                const scaleX = containerWidth / imageWidth;
+                const scaleY = containerHeight / imageHeight;
+
+                if (fit === 'contain') {
+                    const scale = Math.min(scaleX, scaleY);
+                    finalWidth = Math.floor(imageWidth * scale);
+                    finalHeight = Math.floor(imageHeight * scale);
+                } else if (fit === 'cover') {
+                    const scale = Math.max(scaleX, scaleY);
+                    finalWidth = Math.floor(imageWidth * scale);
+                    finalHeight = Math.floor(imageHeight * scale);
+                }
+
+                // Вычисляем смещение для центрирования
+                if (align === 'center') {
+                    offsetX = (containerWidth - finalWidth) / 2;
+                } else if (align === 'right') {
+                    offsetX = containerWidth - finalWidth;
+                }
+
+                if (valign === 'center') {
+                    offsetY = (containerHeight - finalHeight) / 2;
+                } else if (valign === 'bottom') {
+                    offsetY = containerHeight - finalHeight;
+                }
+
+            } else {
+                // Только по ширине (старое поведение)
+                const scale = containerWidth / imageWidth;
+                finalWidth = containerWidth;
+                finalHeight = Math.floor(imageHeight * scale);
+            }
+
+            // В режиме отладки рисуем контейнер
+            if (debug && containerWidth && containerHeight) {
+                drawDebugContainer(doc, x, y, containerWidth, containerHeight, debugColor, debugBorderColor, debugBorderWidth);
+
+                // Добавляем информацию о размерах
+                doc.save();
+                doc.fontSize(6)
+                    .font('Helvetica')
+                    .fillColor('#666666')
+                    .text(
+                        `img: ${imageWidth}x${imageHeight} → ${finalWidth}x${finalHeight} (scale: ${(finalWidth / imageWidth).toFixed(2)})`,
+                        x + 2,
+                        y + containerHeight - 12,
+                        { width: containerWidth - 4, align: 'left' }
+                    );
+                doc.restore();
+            }
+
+            // Добавляем изображение со смещением
             doc.image(imageBuffer, {
-                x: x,
-                y: y,
-                width: width,
-                height: height
+                x: x + offsetX,
+                y: y + offsetY,
+                width: finalWidth,
+                height: finalHeight
             });
 
             return {
-                width: width,
-                height: height,
-                scale: scale
+                width: finalWidth,
+                height: finalHeight,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                scale: finalWidth / imageWidth,
+                originalWidth: imageWidth,
+                originalHeight: imageHeight
             };
         } catch (err) {
             console.error(`❌ Ошибка добавления изображения: ${err.message}`);
+
+            // В режиме отладки показываем контейнер с ошибкой
+            if (debug && containerWidth && containerHeight) {
+                drawDebugContainer(doc, x, y, containerWidth, containerHeight, '#FFE8E8', '#D94A4A', 0.5, `❌ Ошибка: ${err.message}`);
+            }
             return null;
         };
+    };
+
+    //  Функция отрисовки рамки вокруг изображения для отладки
+    function drawDebugContainer(doc, x, y, width, height, fillColor, borderColor, borderWidth, message = '') {
+        doc.save();
+        // Заливка фона
+        if (fillColor) {
+            doc.fillColor(fillColor)
+                .rect(x, y, width, height)
+                .fill();
+        };
+        // Рамка контейнера
+        if (borderColor) {
+            doc.lineWidth(borderWidth || 0.5)
+                .rect(x, y, width, height)
+                .stroke(borderColor);
+        };
+        // Текст-заглушка
+        if (message) {
+            doc.fontSize(8)
+                .font('Helvetica')
+                .fillColor('#666666')
+                .text(message, x + 5, y + height / 2 - 4, {
+                    width: width - 10,
+                    align: 'center',
+                    baseline: 'middle'
+                });
+        };
+        // Крестики по углам для визуального контроля размера
+        const crossSize = 8;
+        doc.lineWidth(0.3)
+            .strokeColor('#999999');
+        // Верхний левый угол
+        doc.moveTo(x, y + crossSize).lineTo(x, y).lineTo(x + crossSize, y);
+        // Верхний правый угол
+        doc.moveTo(x + width - crossSize, y).lineTo(x + width, y).lineTo(x + width, y + crossSize);
+        // Нижний левый угол
+        doc.moveTo(x, y + height - crossSize).lineTo(x, y + height).lineTo(x + crossSize, y + height);
+        // Нижний правый угол
+        doc.moveTo(x + width - crossSize, y + height).lineTo(x + width, y + height).lineTo(x + width, y + height - crossSize);
+        doc.restore();
     };
 
     //  Функция создания штампа сборочного чертежа
@@ -3883,10 +3996,43 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             font = 'Arial'
         } = options;
 
-        // Твои размеры
         const ch = 7 * mm;
         const cw = 99 * mm;
         const squareSize = 21 * mm;
+
+        const width_header = pageWidth - 2 * margin - 90 * mm;
+        const x_header = (pageWidth - width_header) / 2;
+        const y_header = margin + 5 * mm;
+
+        //  Добавляем название листа
+        drawCell(doc, {
+            x: x_header,
+            y: y_header,
+            width: width_header,
+            height: ch,
+            text: `Схема сборки`,
+            fontName: fontName,
+            fontSize: fontSize + 6,
+            //border: [0.5, 0.5, 0.5, 0.5],
+            bold: true,
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Добавляем название изделия
+        drawCell(doc, {
+            x: x_header,
+            y: y_header + ch,
+            width: width_header,
+            height: ch,
+            text: `${data.modelName}`,
+            fontName: fontName,
+            fontSize: fontSize + 6,
+            //border: [0.5, 0.5, 0.5, 0.5],
+            bold: true,
+            align: 'center',
+            valign: 'center'
+        });
 
         // Координаты правого нижнего угла штампа
         let x = pageWidth - margin - cw - squareSize;
@@ -4250,10 +4396,12 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
 
         //  3. Чертеж
         const drawWidth = (120 - 5) * mm;
+        const drawHeight = (160 * mm);
         addImageFixedWidth(doc, {
             x: pageWidth - drawWidth - margin - 5 * mm,
             y: margin + (5 + 7) * mm,
-            width: drawWidth,
+            containerWidth: drawWidth,
+            containerHeight: drawHeight,
             imagePath: path.join(
                 settings.drawDIR,
                 'png',
@@ -4310,21 +4458,20 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontSize: 8
         });
 
-        return;
-
         //  3. Чертеж
-        const drawWidth = (120 - 5) * mm;
+        const drawWidth = pageWidth - 4 * margin;
+        const drawHeight = pageHeight - 60 * mm
         addImageFixedWidth(doc, {
-            x: pageWidth - drawWidth - margin - 5 * mm,
-            y: margin + (5 + 7) * mm,
-            width: drawWidth,
+            x: 2 * margin,
+            y: margin + (21) * mm,
+            containerWidth: drawWidth,
+            containerHeight: drawHeight,
             imagePath: path.join(
                 settings.drawDIR,
                 'png',
                 data.drawName + '.png'
             )
         });
-
     };
 
     //  Функция сохранения документа
@@ -4332,15 +4479,8 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         return new Promise((resolve, reject) => {
             const writeStream = fs.createWriteStream(filePath);
             doc.pipe(writeStream);
-
-            writeStream.on('finish', () => {
-                resolve();
-            });
-
-            writeStream.on('error', (err) => {
-                reject(err);
-            });
-
+            writeStream.on('finish', () => { resolve() });
+            writeStream.on('error', (err) => { reject(err) });
             doc.end();
         });
     };
