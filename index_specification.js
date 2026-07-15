@@ -555,7 +555,7 @@ async function convertPDFtoPNG(fileNames, baseDIR) {
     await fsPromises.mkdir(outputDIR, { recursive: true });
 
     // Формируем массив имён с расширением .pdf
-    const pdfFiles = fileNames.map(name => `${name}.pdf`);
+    let pdfFiles = fileNames.map(name => `${name}.pdf`);
 
     // Проверяем, что все файлы существуют (опционально)
     const missing = [];
@@ -650,7 +650,12 @@ function findAssemblyUnitID(item) {
     while (elem) {
         elem = elem.Owner;
         if (elem && elem.IsAssemblyUnit && elem.Owner instanceof TModel3D) {
-            return { UID: elem.UID, name: elem.Name }
+            return {
+                UID: elem.UID,
+                name: elem.Name,
+                pos: elem.ArtPos,
+                designation: elem.Designation
+            };
         };
     };
     return undefined;
@@ -3434,385 +3439,11 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
     await workbook.xlsx.writeFile(filePath);
 };
 
-//  Функция формирования сборочных чертежей
-async function createAssemblyDrawings(prj_arr, settings) {
-
-    //#region Настройки стилей документа
-
-    //  Шрифт документа
-    const fontFamily = settings.estimate.fontFamily ?
-        settings.estimate.fontFamily : "Arial";
-    const font_size = 9;        //  Размер шрифта 
-    const doc_font = {          //  Настройки шрифта страницы
-        name: fontFamily,
-        size: font_size + 7,
-        bold: true
-    };
-    const tabl_font = {         //  Настройки шрифта названия таблицы
-        name: fontFamily,
-        size: font_size + 2,
-        bold: true
-    };
-    const h_font = {            //  Настройик шрифта заглавной строки таблицы
-        name: fontFamily,
-        size: font_size,
-        bold: true
-    };
-    const r_font = {            //  Настройки шрифта строки таблицы
-        name: fontFamily,
-        size: font_size - 1,
-        bold: false
-    };
-    const h1 = 24;              //  Высота строки заголовка страницы
-    //const rh = 14;              //  Высота строки данных (таблицы) 
-    let screenScale = await getWindowsScreenScale();
-    const rh = getAdaptiveRowHeight(14, screenScale);
-
-    const scol = 3;             //  Начальная колонка таблицы
-    const headerRowInd = 6;     //  Индекс верхней строки таблицы
-
-    //  Настройки цветов заливки ячеек
-    const fill = settings.estimate.fillColor;
-    const fill_green = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.green } };
-    const fill_yellow = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.yellow } };
-    const fill_orange = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.orange } };
-    const fill_red = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.red } };
-    const fill_blue = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.blue } };
-
-    //  Настройки выравнивания в ячейках
-    const algnLeft = { indent: 1, horizontal: 'left', vertical: 'middle' };
-    const algnRight = { indent: 1, horizontal: 'right', vertical: 'middle' };
-    const algnCenter = { horizontal: 'center', vertical: 'middle' };
-
-    //  Форматирование чисел
-    const f_format = '#,##0.00';
-    const sf_format = '#,##0.0';
-    const n_format = '# ##0';
-
-    const pageSetup = {
-        orientation: 'landscape',   // 'portrait' | 'landscape'
-        margins: {                  // Поля страницы в дюймах (1д = 2.54см)
-            top: 0.0,               // Верхнее поле
-            bottom: 0.0,            // Нижнее поле
-            left: 0.0,              // Левое поле
-            right: 0.0,             // Правое поле
-            header: 0.0,            // Отступ для колонтитула сверху
-            footer: 0.0             // Отступ для колонтитула снизу
-        },
-        // Масштабирование
-        fitToPage: true,            // Вписать в страницу
-        fitToWidth: 1,              // Вписать по ширине (1 страница)
-        fitToHeight: 0,             // По высоте (0 = автоматически)
-    };
-    //#endregion
-
-    //  Настройка ширины колонок документа
-    const columns = [
-        { width: 3 },   //  Отступ от края листа
-        { width: 3 },
-        { width: 4 },
-        { width: 6 },   //  Позиция
-        { width: 20 },  //  Название
-        { width: 6 },   //  Количество
-        { width: 9 },   //  Длина
-        { width: 9 },   //  Ширина
-        { width: 24 },   //  Материал
-        { width: 3 },
-        { width: 8 },
-        { width: 8 },
-        { width: 8 },
-        { width: 8 },
-        { width: 8 },
-        { width: 8 },
-        { width: 8 },
-        { width: 3 }
-    ];
-
-    //  Рисует рамку по периметру
-    function drawBorder(worksheet, startCol, startRow, endCol, endRow) {
-        const s = { style: 'medium' };
-        // Верхняя граница
-        for (let col = startCol; col <= endCol; col++) {
-            const cell = worksheet.getCell(startRow, col);
-            cell.border = { top: s };
-        };
-        // Нижняя граница
-        for (let col = startCol; col <= endCol; col++) {
-            const cell = worksheet.getCell(endRow, col);
-            cell.border = { bottom: s };
-        };
-        // Левая граница
-        for (let row = startRow; row <= endRow; row++) {
-            const cell = worksheet.getCell(row, startCol);
-            cell.border = { left: s };
-        };
-        // Правая граница
-        for (let row = startRow; row <= endRow; row++) {
-            const cell = worksheet.getCell(row, endCol);
-            cell.border = { right: s };
-        };
-        //  Угловые ячейки
-        const tlCell = worksheet.getCell(startRow, startCol);
-        tlCell.border = { top: s, left: s };
-        const trCell = worksheet.getCell(startRow, endCol);
-        trCell.border = { top: s, right: s };
-        const blCell = worksheet.getCell(endRow, startCol);
-        blCell.border = { bottom: s, left: s };
-        const brCell = worksheet.getCell(endRow, endCol);
-        brCell.border = { bottom: s, right: s };
-    };
-
-    // Рисует основную надпись (штамп) в правом нижнем углу
-    function drawTitleBlock(worksheet, totalColumns, totalRows) {
-        const startCol = totalColumns - 6;
-        const startRow = totalRows - 6;
-
-        // Рамка штампа
-        for (let row = startRow; row <= totalRows; row++) {
-            for (let col = startCol; col <= totalColumns; col++) {
-                const cell = worksheet.getCell(row, col);
-                cell.border = {
-                    top: { style: 'thin' },
-                    left: { style: 'thin' },
-                    bottom: { style: 'thin' },
-                    right: { style: 'thin' }
-                };
-                cell.alignment = { horizontal: 'center', vertical: 'middle' };
-                cell.font = { size: 8, name: 'Arial' };
-            }
-        }
-
-        // Заполняем штамп
-        // Строка 1: Наименование
-        worksheet.mergeCells(`${getColumnLetter(startCol)}${startRow}:${getColumnLetter(startCol + 3)}${startRow}`);
-        worksheet.getCell(startRow, startCol).value = 'Наименование';
-        worksheet.getCell(startRow, startCol).font = { bold: true, size: 8 };
-
-        worksheet.mergeCells(`${getColumnLetter(startCol + 4)}${startRow}:${getColumnLetter(totalColumns)}${startRow}`);
-        worksheet.getCell(startRow, startCol + 4).value = 'Сборочный чертеж';
-
-        // Строка 2: Обозначение
-        worksheet.mergeCells(`${getColumnLetter(startCol)}${startRow + 1}:${getColumnLetter(startCol + 3)}${startRow + 1}`);
-        worksheet.getCell(startRow + 1, startCol).value = 'Обозначение';
-        worksheet.getCell(startRow + 1, startCol).font = { bold: true, size: 8 };
-
-        worksheet.mergeCells(`${getColumnLetter(startCol + 4)}${startRow + 1}:${getColumnLetter(totalColumns)}${startRow + 1}`);
-        worksheet.getCell(startRow + 1, startCol + 4).value = '';
-
-        // Строка 3: Масштаб
-        worksheet.mergeCells(`${getColumnLetter(startCol)}${startRow + 2}:${getColumnLetter(startCol + 3)}${startRow + 2}`);
-        worksheet.getCell(startRow + 2, startCol).value = 'Масштаб';
-        worksheet.getCell(startRow + 2, startCol).font = { bold: true, size: 8 };
-
-        worksheet.mergeCells(`${getColumnLetter(startCol + 4)}${startRow + 2}:${getColumnLetter(totalColumns)}${startRow + 2}`);
-        worksheet.getCell(startRow + 2, startCol + 4).value = '1:1';
-
-        // Строка 4: Лист
-        worksheet.mergeCells(`${getColumnLetter(startCol)}${startRow + 3}:${getColumnLetter(startCol + 3)}${startRow + 3}`);
-        worksheet.getCell(startRow + 3, startCol).value = 'Лист';
-        worksheet.getCell(startRow + 3, startCol).font = { bold: true, size: 8 };
-
-        worksheet.mergeCells(`${getColumnLetter(startCol + 4)}${startRow + 3}:${getColumnLetter(totalColumns)}${startRow + 3}`);
-        worksheet.getCell(startRow + 3, startCol + 4).value = '1';
-    };
-
-    //  Функция вычисления размер изображения
-    function calculateImageFit(imageBuffer, worksheet, area, columns) {
-        // Получаем размеры изображения
-        const dimensions = imageSize(imageBuffer);
-
-        // Суммируем ширину колонок от startCol до endCol
-        let areaWidth = 0;
-        for (let i = area.startCol; i <= area.endCol; i++) {
-            // Индексы колонок в массиве начинаются с 0, а в Excel с 1
-            const colIndex = i - 1;
-            if (colIndex >= 0 && colIndex < columns.length) {
-                areaWidth += columns[colIndex].width || 8; // если width нет, берем 8 по умолчанию
-            }
-        }
-
-        // Ширина колонки в пикселях: 1 единица ширины Excel ≈ 7.5 пикселей
-        // Точнее: 1 единица = 7.5 пикселей (при стандартном шрифте)
-        const PIXELS_PER_UNIT = 8.0;
-        areaWidth = areaWidth * PIXELS_PER_UNIT;
-
-        // Высота области (суммируем высоту строк)
-        let areaHeight = 0;
-        for (let i = area.startRow; i <= area.endRow; i++) {
-            const row = worksheet.getRow(i);
-            areaHeight += row.height || 15; // если height нет, берем 15 по умолчанию
-        }
-        // Высота строки в пикселях: 1 пункт ≈ 1.33 пикселя
-        const PIXELS_PER_POINT = 1.33;
-        areaHeight = areaHeight * PIXELS_PER_POINT;
-
-        const imageWidth = dimensions.width;
-        const imageHeight = dimensions.height;
-
-        // Вычисляем масштаб по ширине
-        const scale = areaWidth / imageWidth;
-
-        const finalWidth = areaWidth;
-        const finalHeight = Math.floor(imageHeight * scale);
-
-        return {
-            width: finalWidth,
-            height: finalHeight,
-            offsetX: 0,
-            offsetY: 0,
-            originalWidth: imageWidth,
-            originalHeight: imageHeight,
-            scale: scale,
-            areaWidth: areaWidth,
-            areaHeight: areaHeight
-        };
-    };
-
-    //  Добавляет изображение на лист с вписыванием в область
-    async function addImageFit(worksheet, workbook, imageBuffer, area, columns) {
-        const result = calculateImageFit(imageBuffer, worksheet, area, columns);
-
-        const imageId = workbook.addImage({
-            buffer: imageBuffer,
-            extension: 'png'
-        });
-
-        await worksheet.addImage(imageId, {
-            tl: {
-                col: area.startCol,
-                row: area.startRow,
-                colOff: result.offsetX || 0,
-                rowOff: result.offsetY || 0
-            },
-            ext: {
-                width: result.width,
-                height: result.height
-            }
-        });
-
-        return result;
-    };
-
-    //  Формируем картинки
-    const drawNames = prj_arr.flatMap(item => item.map(el => el.drawName));
-    const pictureBool = await convertPDFtoPNG(drawNames, settings.drawDIR);
-    if (!pictureBool) return;   //  Отменяем если картинки не сформированы
-
-    //  Создаем новую книгу документа
-
-    Action.Hint = 'Создаем сборочные чертежи';
-    const workbook = new ExcelJS.Workbook();    //  Новая книга
-    workbook.creator = settings.author;         //  Автор документа
-    workbook.created = new Date();              //  Дата документа
-
-
-    //  Количество строк листа
-    const totalRows = 42;
-
-    async function createSheetAU(data) {
-        const {
-            workbook,
-            sheet_name,
-            columns,
-            drawName,
-            drawDIR
-        } = data;
-
-        const worksheet = workbook.addWorksheet(sheet_name);
-        worksheet.pageSetup = pageSetup;
-        worksheet.columns = columns;
-
-        for (let i = 1; i <= totalRows; i++) {
-            worksheet.getRow(i).height = rh;
-        };
-
-        drawBorder(worksheet, 2, 2, columns.length, totalRows);
-
-        const drawPath = path.join(drawDIR, 'png', drawName + '.png');
-        try {
-            await fsPromises.access(drawPath);
-        } catch {
-            console.log(`Файл не найден: ${drawPath}`);
-            return;
-        };
-
-        const imageBuffer = await fsPromises.readFile(drawPath);
-
-        // Область для изображения (колонки 10-15)
-        const area = {
-            startCol: 10,
-            startRow: 2,
-            endCol: 15,
-            endRow: 45
-        };
-
-        // Добавляем изображение с вписыванием
-        const result = await addImageFit(
-            worksheet,
-            workbook,
-            imageBuffer,
-            area,
-            columns  // Передаем массив колонок
-        );
-    }
-
-    //  Запускаем цикл формирования страниц сборочных чертежей
-    for (const array of prj_arr) {
-        for (let i = 0; i < array.length; i++) {
-            const aUnit = array[i];
-            await createSheetAU({
-                workbook: workbook,
-                sheet_name: aUnit.sign + i,
-                columns: columns,
-                drawName: aUnit.drawName,
-                drawDIR: settings.drawDIR
-            });
-        }
-    }
-
-    // Сохранение документа
-    const fileName = `${sanitizeFileName(
-        PROJECT_NAME + "_Сборочные чертежи проекта")}.xlsx`;
-
-    // Проверяем/создаем директорию
-    const RF = path.join(FOLDER, SW_FOLDER);
-    if (!fs.existsSync(RF)) fs.mkdirSync(RF, { recursive: true });
-    const filePath = path.join(RF, fileName);
-    await workbook.xlsx.writeFile(filePath);
-
-};
-
 //  Функция создания PDF сборочных чертежей
 async function createPDFAssemblyDrawings(assembly_array, settings) {
 
     const mm = 2.83465;
     const fontName = 'Arial';
-
-    // //  Группировка деталей по позиции и суммированием количество
-    // function groupPartsByPos(items, groupField = 'pos') {
-    //     if (!items || !Array.isArray(items) || items.length === 0) return [];
-    //     const groups = {};
-    //     for (const item of items) {
-    //         const key = item[groupField];
-    //         if (!key) continue;
-    //         if (!groups[key]) {
-    //             // Сохраняем первый встреченный объект, добавляем поле count
-    //             groups[key] = {
-    //                 ...item,
-    //                 count: 0
-    //             };
-    //         };
-    //         // Увеличиваем счетчик
-    //         groups[key].count += 1;
-    //     };
-
-    //     // Преобразуем объект в массив и сортируем по pos
-    //     return Object.values(groups).sort((a, b) => {
-    //         const aVal = parseFloat(a[groupField]) || 0;
-    //         const bVal = parseFloat(b[groupField]) || 0;
-    //         return aVal - bVal;
-    //     });
-    // };
 
     //  Группировка деталей по позиции и суммированием количество
     function groupPartsByPos(items, groupField = 'pos') {
@@ -4130,13 +3761,12 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         };
     };
 
-    //  Функция создания штампа
+    //  Функция создания штампа сборочного чертежа
     function createDocStamp(doc, pageWidth, pageHeight, options = {}) {
         const {
             data,
             title = '',
             designation = '',
-            scale = '1:1',
             sheet = '1',
             totalSheets = '1',
             margin = 5 * mm,
@@ -4205,6 +3835,130 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             width: cw - 24 * mm,
             height: ch,
             text: `Дата печати: ${formatDate(new Date())} г.`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Лист / кол-во листов
+        drawCell(doc, {
+            x: x + cw - 24 * mm,
+            y: y + 2 * ch,
+            width: 24 * mm,
+            height: ch,
+            text: `Лист ${sheet} / ${totalSheets}`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        // Квадрат справа от штампа
+        drawCell(doc, {
+            x: pageWidth - margin - squareSize,
+            y: pageHeight - margin - squareSize,
+            width: squareSize,
+            height: squareSize,
+            text: '',
+            fontName: font,
+            border: [1.5, 1.5, 1.5, 1.5],
+        });
+    };
+
+    //  Создание штампа листа схемы сборки
+    function createDocUnionStamp(doc, pageWidth, pageHeight, options = {}) {
+        const {
+            data,
+            title = '',
+            designation = '',
+            sheet = '1',
+            totalSheets = '1',
+            margin = 5 * mm,
+            fontSize = 8,
+            font = 'Arial'
+        } = options;
+
+        // Твои размеры
+        const ch = 7 * mm;
+        const cw = 99 * mm;
+        const squareSize = 21 * mm;
+
+        // Координаты правого нижнего угла штампа
+        let x = pageWidth - margin - cw - squareSize;
+        let y = pageHeight - margin - ch * 3;
+
+        //  Название чертежа
+        drawCell(doc, {
+            x: x,
+            y: y,
+            width: cw,
+            height: ch,
+            text: `Схема сборки на ${data.modelName}`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Название проекта / обозначение изделия в проекте
+        drawCell(doc, {
+            x: pageWidth - margin - 45 * mm,
+            y: margin,
+            width: 45 * mm,
+            height: 7 * mm,
+            text: `${data.prjName} / ${data.sign}`,
+            fontName: font,
+            fontSize: fontSize + 4,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Название модели
+        drawCell(doc, {
+            x: x,
+            y: y + ch,
+            width: cw,
+            height: ch,
+            text: `${data.modelName}`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Дата печати отчетов
+        drawCell(doc, {
+            x: x,
+            y: y + 2 * ch,
+            width: cw - 24 * mm,
+            height: ch,
+            text: `Дата печати: ${formatDate(new Date())} г.`,
+            fontName: font,
+            fontSize: fontSize,
+            bold: true,
+            border: [1.5, 1.5, 1.5, 1.5],
+            align: 'center',
+            valign: 'center'
+        });
+
+        //  Лист / кол-во листов
+        drawCell(doc, {
+            x: x + cw - 24 * mm,
+            y: y + 2 * ch,
+            width: 24 * mm,
+            height: ch,
+            text: `Лист ${sheet} / ${totalSheets}`,
             fontName: font,
             fontSize: fontSize,
             bold: true,
@@ -4460,7 +4214,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             isFirstPage = false,
             fontName = 'Arial',
             designation = '',
-            scale = '1:1',
             sheet = '1',
             totalSheets = '1'
         } = options;
@@ -4488,7 +4241,6 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             data: data,
             title: title,
             designation: designation,
-            scale: scale,
             sheet: sheet,
             totalSheets: totalSheets,
             margin: margin,
@@ -4511,6 +4263,68 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
 
         //  4. Таблица деталей
         createAUPartsTable(doc, options);
+    };
+
+    //  Функция создания листа схемы сборки
+    function createUnionDrawingSheet(doc, options = {}) {
+        const {
+            data,
+            title = 'Схема сборки',
+            margin = 5 * mm,
+            borderWidth = 1.5,
+            orientation = 'landscape',
+            isFirstPage = false,
+            fontName = 'Arial',
+            designation = '',
+            sheet = '1',
+            totalSheets = '1'
+        } = options;
+
+        if (!isFirstPage) {
+            doc.addPage({
+                size: 'A4',
+                layout: orientation,
+                margin: 0
+            });
+        };
+
+        const pageWidth = doc.page.width;
+        const pageHeight = doc.page.height;
+
+        // 1. Основна рамка
+        doc.save();
+        doc.lineWidth(borderWidth)
+            .rect(margin, margin, pageWidth - margin * 2, pageHeight - margin * 2)
+            .stroke('#000000');
+        doc.restore();
+
+        //  2. Штамп
+        createDocUnionStamp(doc, pageWidth, pageHeight, {
+            data: data,
+            title: `Схема сборки на ${data.modelName} / ${designation}`,
+            designation: designation,
+            sheet: sheet,
+            totalSheets: totalSheets,
+            margin: margin,
+            font: fontName,
+            fontSize: 8
+        });
+
+        return;
+
+        //  3. Чертеж
+        const drawWidth = (120 - 5) * mm;
+        addImageFixedWidth(doc, {
+            x: pageWidth - drawWidth - margin - 5 * mm,
+            y: margin + (5 + 7) * mm,
+            width: drawWidth,
+            imagePath: path.join(
+                settings.drawDIR,
+                'png',
+                data.drawName + '.png'
+            )
+        });
+
     };
 
     //  Функция сохранения документа
@@ -4558,6 +4372,34 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         const pdfDir = path.join(FOLDER, SW_FOLDER);
         if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
 
+        //  Проверяем существование общего сборочного чертежа
+        const sbImagePath = path.join(settings.drawDIR, 'png', array[0].modelDrawName + '.png');
+
+        let counter = 0;
+        if (fs.existsSync(sbImagePath)) {
+            counter++;
+            const sbData = array[0];
+            // Запускаем создание общего сборочного чертежа
+            createUnionDrawingSheet(doc, {
+                data: {
+                    prjName: sbData.prjName,
+                    drawName: sbData.modelDrawName,
+                    modelName: sbData.modelName,
+                    sign: sbData.sign,
+                },
+                title: 'Схема сборки',
+                margin: 5 * mm,
+                orientation: 'landscape',
+                isFirstPage: true,
+                fontName: fontName,
+                designation: sbData.sign,
+                sheet: String(1),
+                totalSheets: String(array.length + counter)
+            });
+
+
+        };
+
         for (let i = 0; i < array.length; i++) {
             const aUnit = array[i];
             createDrawingSheet(doc, {
@@ -4565,12 +4407,12 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 title: aUnit.drawName,
                 margin: 5 * mm,
                 orientation: 'landscape',
-                isFirstPage: i === 0,
+                isFirstPage: counter === 0,
                 fontName: fontName,
                 designation: aUnit.sign || '',
                 scale: aUnit.scale || '1:1',
-                sheet: String(i + 1),
-                totalSheets: String(array.length)
+                sheet: String(i + counter + 1),
+                totalSheets: String(array.length + counter)
             });
         };
         await savePDF(doc, filePath);
@@ -4738,18 +4580,24 @@ async function main() {
             const agrMat = aggregateMaterials(prj_array);
 
             //  5. Формируем файлы проекта
-
             try {
-                Action.Hint = `Созданеи сборочных чертежей...`;
-                //  Тут нужна функция конвертации в PNG
+                Action.Hint = `Создание сборочных чертежей...`;
 
-                //  Запуск функции создания документа
+                //  Формируем картинки сборочных чертежей
+                const drawNames = assembly_array.flatMap(item => item.map(el => el.drawName));
+
+                //  Получаем имена сборочных чертежей модели.
+                const modelDrawNames = assembly_array.map(item => item[0]?.modelDrawName);
+                drawNames.push(...modelDrawNames);
+
+                const pictureBool = await convertPDFtoPNG(drawNames, settings.drawDIR);
+                if (!pictureBool) console.log('Картинки сборочных чертежей не созданы.');
+
+
                 await createPDFAssemblyDrawings(assembly_array, settings);
-
             } catch (e) {
                 errFinish('Ошибка создания сборочных чертежей: ' + e.message);
             };
-
 
             Action.Finish();    //  Временная заглушка
 
