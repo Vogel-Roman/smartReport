@@ -1331,6 +1331,7 @@ function setProjectEstimateData(db_data, prj) {
                     buttInfo: []
                 };
             };
+
             //  Площадь деталей и длина контуров деталей
             acc[key].area += item.area * item.prjCount || 0;
             acc[key].contourLength += item.contourLength * item.prjCount || 0;
@@ -1573,7 +1574,7 @@ function aggregateMaterials(prj_arr) {
                 }
             }
         }
-    }
+    };
 
     return result;
 };
@@ -1631,7 +1632,6 @@ async function createEsimateExcelFile(prj_arr) {
     const totalData = [];
 
     //#region Настройки стилей
-
     if (!settings.estimate.classes)
         errFinish("Ошибка файла настроек - classes");
     if (!settings.estimate.fillColor)
@@ -1715,6 +1715,7 @@ async function createEsimateExcelFile(prj_arr) {
         const sign = model.sign;                //  Обозначение в Проекте
         const sheet_name = `${sign}_${name}`.substring(0, 31);
         const worksheet = workbook.addWorksheet(sheet_name);
+        const prj_count = model.count;
 
         worksheet.pageSetup = pageSetup;
 
@@ -2639,6 +2640,7 @@ async function createEsimateExcelFile(prj_arr) {
             left: { style: 'none' }, right: { style: 'thin' },
             top: { style: 'medium' }, bottom: { style: 'medium' }
         };
+
         //  Дубликат в шапке таблицы текста ИТОГО
         const o_d_total_text = topTotalOperRow.getCell(endMainTableCol - 1);
         o_d_total_text.value = o_total_row_text.value;
@@ -2726,6 +2728,7 @@ async function createEsimateExcelFile(prj_arr) {
             modelName: name,
             modelSign: sign,
             sheet_name: sheet_name,
+            qnt: prj_count,
             materialTotalCell: `${materialTotalCol}${materialTotalRow}`,
             operationTotalCell: `${operationTotalCol}${operationTotalRow}`,
         });
@@ -2738,13 +2741,15 @@ async function createEsimateExcelFile(prj_arr) {
     //  Создание сводной таблицы по проекту
     function createTotalPage(td, total_worksheet) {
         //  Создание сводной таблицы проекта
-        const headers = ['№', 'ID', 'Изделие', 'Стоимость'];
+        const headers = ['№', 'ID', 'Изделие', 'Кол-во', 'Цена', 'Стоимость'];
         const columns = [
             { width: 0.67 },    //  Отступ
             { width: 5.42 },    //  Номер 
             { width: 7 },       //  Обозначенеи изделия 
-            { width: 60 },      //  Издедие
-            { width: 15 }       //  Стоимость
+            { width: 60 },      //  Название издедия
+            { width: 8 },       //  Количество в проекте
+            { width: 15 },      //  Цена
+            { width: 15 }       //  Сумма
         ];
 
         const rh = 14;
@@ -2752,7 +2757,7 @@ async function createEsimateExcelFile(prj_arr) {
         total_worksheet.columns = columns;
 
         const hri = 6;     //  Индекс верхней строки таблицы
-        const scol = 2;             //  Начальная колонка
+        const scol = 2;    //  Начальная колонка
         const hr = total_worksheet.getRow(hri);
 
         //  Шапка документа
@@ -2773,7 +2778,7 @@ async function createEsimateExcelFile(prj_arr) {
 
         //  Линия под заголовком страницы
         const lineRow = total_worksheet.getRow(3);
-        lineRow.height = setRowHeght(rh);
+        lineRow.height = setRowHeght(5);
         styleCellRange(lineRow, scol, columns.length, {
             border: {
                 left: { style: 'none' }, right: { style: 'none' },
@@ -2781,10 +2786,22 @@ async function createEsimateExcelFile(prj_arr) {
             }
         });
 
+        //  Заголовок таблицы
+        const headerTableRow = total_worksheet.getRow(4);
+        headerTableRow.height = setRowHeght(rh);
+        headerTableRow.alignment = { horizontal: 'left', vertical: 'middle' };
+        headerTableRow.getCell(scol).font = { ...tabl_font };
+        headerTableRow.getCell(scol).value = 'Список изделий';
+
+        //  Строка под заголовком таблицы
+        const underTHRow = total_worksheet.getRow(5);
+        underTHRow.height = setRowHeght(5);
+
         //  Шапка таблицы
         for (let i = 0; i < headers.length; i++) {
             hr.getCell(scol + i).value = headers[i];
         };
+
         setRowTableStyle(
             hr,
             scol,
@@ -2801,6 +2818,7 @@ async function createEsimateExcelFile(prj_arr) {
             const sheetName = model.sheet_name;
             const matTotalCell = model.materialTotalCell;
             const operTotalCell = model.operationTotalCell;
+            const qnt = model.qnt;
 
             const rn = hri + 1 + i; //  Индекс текущей строки
             const row = total_worksheet.getRow(rn);
@@ -2809,24 +2827,37 @@ async function createEsimateExcelFile(prj_arr) {
             numCell.value = i + 1;
             numCell.alignment = algn_right;
 
-            //  Ячейка названия изделия
+            //  Ячейка обозначения изделия в проекте
             const signCell = row.getCell(scol + 1);
             signCell.value = sign;
             signCell.alignment = algn_right;
 
             //  Ячейка названия изделия
-            const codeCell = row.getCell(scol + 2);
-            codeCell.value = name;
-            codeCell.alignment = algn_left;
+            const nameCell = row.getCell(scol + 2);
+            nameCell.value = name;
+            nameCell.alignment = algn_left;
+
+            //  Ячейка количества
+            const qntCell = row.getCell(scol + 3);
+            qntCell.value = qnt;
+            qntCell.alignment = algn_right;
+
+            //  Ячейка цены
+            const priceCell = row.getCell(scol + 4);
+            priceCell.value = {
+                formula: `('${sheetName}'!${matTotalCell}+'${sheetName}'!${operTotalCell})/${qnt}`
+            };
+            priceCell.alignment = algn_right;
+            priceCell.numFmt = n_format;
 
             //  Ячейка суммы
-            const sumCell = row.getCell(scol + 3);
+            const sumCell = row.getCell(scol + 5);
             sumCell.value = 10000;
             sumCell.value = {
                 formula: `'${sheetName}'!${matTotalCell}+'${sheetName}'!${operTotalCell}`
             };
             sumCell.alignment = algn_right;
-            sumCell.numFmt = f_format;
+            sumCell.numFmt = n_format;
 
             //  Стилизация строк таблицы
             setRowTableStyle(       //  Основная строка
@@ -2876,7 +2907,7 @@ async function createEsimateExcelFile(prj_arr) {
             formula: `SUM(${sumLtr}${startSum}:${sumLtr}${endSum})`
         };
         totalSumCell.alignment = algn_right;
-        totalSumCell.numFmt = f_format;
+        totalSumCell.numFmt = n_format;
     };
     createTotalPage(totalData, total_worksheet);
 
@@ -3196,6 +3227,7 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
             headers,
             sheet_name,
             sheet_header,
+            union_page = false,
         } = data;
 
         //  Создаем новую вкладку документа
@@ -3219,6 +3251,16 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
                 top: { style: 'medium' }, bottom: { style: 'none' }
             }
         });
+
+        //  Заголовок таблицы
+        const headerTableRow = worksheet.getRow(4);
+        headerTableRow.height = setRowHeght(rh);
+        headerTableRow.alignment = { horizontal: 'left', vertical: 'middle' };
+        headerTableRow.getCell(scol).font = { ...tabl_font };
+        headerTableRow.getCell(scol).value = 'Спецификация материалов и фурнитуры';
+
+        const del_t_row = worksheet.getRow(5);
+        del_t_row.height = setRowHeght(5);
 
         //  Шапка таблицы
         const headerRow = worksheet.getRow(headerRowInd);
@@ -3283,10 +3325,11 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
                     quantity = item.count;
                 };
 
-                //  Преобразование площадного материала  
-                if (settings.estimate.useCoefficient) {
+                //  Преобразование площадного материала 
+                const use_coeff = settings.estimate.useCoefficient;
+                if (use_coeff && union_page) {
                     let k = item.k ? item.k : 1;
-                    price = k * price;
+                    price = price / k;  // вычисляем цену листа
                     if (item.area) {
                         quantity = Math.round(quantity * k);
                         unit = 'шт';
@@ -3376,13 +3419,14 @@ async function createSpecificationProjectFile(agr_arr, prj_arr, settings) {
         columns: columns,
         headers: headers,
         sheet_name: `Спецификация проекта`.substring(0, 31),
-        sheet_header: `Сводная таблица`
+        sheet_header: `Сводная таблица проекта ${PROJECT_NAME}`,
+        union_page: true,
     });
 
 
     prj_arr.forEach(model => {
         const estimate = model.estimate_data;   //  Объект данных Сметы
-        const name = model.name;                //  Имя изделия
+        const name = model.modelName;      //  Имя изделия
         const sign = model.sign;                //  Обозначение в Проекте
         const sheet_name = `${sign}_${name}`.substring(0, 31);
         const sheet_header = `${name}`;
