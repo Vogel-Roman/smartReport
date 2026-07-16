@@ -1964,6 +1964,85 @@ async function createEsimateExcelFile(prj_arr) {
             ind += items.length;
         });
 
+        //================================================================//
+        //  добавляем пустые строки
+        const serviceNames = [
+            'Проектирование',
+            'Сборка',
+            'Доставка',
+            '—'
+        ]
+        for (let i = 0; i < serviceNames.length; i++) {
+
+            const row = worksheet.getRow(ind);
+
+            //  Литеры колонок цены и количества
+            const cpl = getColumnLetter(scol + 3);
+            const cvl = getColumnLetter(scol + 5);
+
+            //  Стиль строки основной таблицы
+            setRowTableStyle(
+                row,
+                scol,
+                headers.length,
+                row_height - 1,
+                'main',
+                r_font
+            );
+            //  Стиль строки расчетной таблицы
+            setRowTableStyle(
+                row,
+                scol + headers.length + offset,
+                v_headers.length,
+                row_height - 1,
+                'main',
+                r_font
+            );
+
+            //  Ячейка номера строки
+            const counterCell = row.getCell(scol + 0);
+            counterCell.value = row_counter++;
+            counterCell.alignment = algn_right;
+
+            //  Ячейка артикула материала
+            const articleCell = row.getCell(scol + 1);
+            articleCell.value = '';
+            articleCell.alignment = algn_left;
+
+            //  Ячейка названия материала
+            const nameCell = row.getCell(scol + 2);
+            nameCell.value = serviceNames[i];
+            nameCell.alignment = algn_left;
+
+            //  Ячейка количества
+            const countCell = row.getCell(scol + 3);
+            countCell.alignment = algn_right;
+            countCell.value = 1;
+            countCell.numFmt = n_format;
+
+            //  Ячейка ед. изм.
+            const unitCell = row.getCell(scol + 4);
+            unitCell.value = 'шт';
+            unitCell.alignment = algn_center; row
+
+            //  Ячейка цены с наценкой
+            const priceCoeffCell = row.getCell(scol + 5);
+            priceCoeffCell.alignment = algn_right;
+            priceCoeffCell.value = 0;
+            priceCoeffCell.numFmt = f_format;
+
+            //  Ячейка суммы с наценкой
+            const coefSumCell = row.getCell(scol + 6);
+            coefSumCell.value = { formula: `${cvl}${ind}*${cpl}${ind}` };
+            coefSumCell.alignment = algn_right;
+            coefSumCell.numFmt = f_format;
+
+            ind++;
+        };
+
+
+        //================================================================//
+
         const row = worksheet.getRow(ind);
         const end_res_col = scol + headers.length;
         const endMainTableCol = scol + headers.length - 1;
@@ -2028,7 +2107,7 @@ async function createEsimateExcelFile(prj_arr) {
         //  Текст ИТОГО вспомогательной таблицы
         const total_row_res_text = row.getCell(endMainTableCol + offset + 2);
         total_row_res_text.value = "Итого:";
-        total_row_res_text.font.size = font_size;
+        total_row_res_text.font.size = font_size; 6
         total_row_res_text.alignment = algn_right;
         total_row_res_text.border = {
             left: { style: 'none' }, right: { style: 'thin' },
@@ -2748,8 +2827,8 @@ async function createEsimateExcelFile(prj_arr) {
             { width: 7 },       //  Обозначенеи изделия 
             { width: 60 },      //  Название издедия
             { width: 8 },       //  Количество в проекте
-            { width: 15 },      //  Цена
-            { width: 15 }       //  Сумма
+            { width: 12 },      //  Цена
+            { width: 12 }       //  Сумма
         ];
 
         const rh = 14;
