@@ -14,7 +14,6 @@ const execPromise = util.promisify(exec);
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const QRCode = require("qrcode");
-// const crypto = require('crypto');
 const { XMLParser } = require('fast-xml-parser');
 
 //#region Инициализация
@@ -606,47 +605,6 @@ async function convertPDFtoPNG(fileNames, baseDIR) {
     };
 };
 
-//  Функция получения процента увеличения изображения монитора
-async function getWindowsScreenScale() {
-    return new Promise((resolve, reject) => {
-        const psCommand = `powershell -NoProfile -Command "$m = '[DllImport(\\"shcore.dll\\")] public static extern int GetScaleFactorForMonitor(IntPtr h, out int s); [DllImport(\\"user32.dll\\")] public static extern IntPtr MonitorFromWindow(IntPtr hw, uint f);'; Add-Type -MemberDefinition $m -Name 'Dpi' -Namespace 'Win' -PassThru | Out-Null; $h = [Win.Dpi]::MonitorFromWindow([IntPtr]::Zero, 1); $s = 0; $null = [Win.Dpi]::GetScaleFactorForMonitor($h, [ref]$s); Write-Output $s"`;
-        exec(psCommand, (error, stdout, stderr) => {
-            if (error) return reject(error);
-            const scale = parseInt(stdout.trim(), 10);
-            resolve(scale);
-        });
-    });
-};
-
-//  Рассчитываем высоту строки в зависимости от масштаба
-function getAdaptiveRowHeight(baseHeight, scale) {
-    // При увеличении масштаба высота строк должна уменьшаться,
-    // чтобы чертеж помещался на страницу
-    const scaleFactors = {
-        100: 1.0,
-        125: 1.20,
-        150: 1.45,
-        175: 1.75,
-        200: 2.00,
-        225: 2.25,
-        250: 2.50
-    };
-
-    // Находим ближайший ключ
-    const keys = Object.keys(scaleFactors).map(Number).sort((a, b) => a - b);
-    let factor = scaleFactors[100];
-
-    for (const key of keys) {
-        if (scale >= key) {
-            factor = scaleFactors[key];
-        }
-    }
-
-    // Округляем до 0.5
-    const result = Math.round((baseHeight * factor) * 2) / 2;
-    return Math.max(result, 8); // Минимальная высота 8pt
-};
-
 //  Функция поиска сборочной единицы элемента модели
 function findAssemblyUnitID(item) {
     let elem = item.Owner;
@@ -666,11 +624,8 @@ function findAssemblyUnitID(item) {
 
 //  Функция получения пользовательского свойства Модели
 function getUserProderty(obj, propName) {
-    if (obj.UserProperty[propName]) {
-        return obj.UserProperty[propName]
-    } else {
-        return '';
-    }
+    if (obj.UserProperty[propName]) return obj.UserProperty[propName]
+    return;
 };
 
 //#endregion
@@ -766,48 +721,6 @@ function readProjectFilesData(prj_file) {
     } catch (e) {
         errFinish(e.message);
     };
-};
-
-//  Функция дл ясборочных чертежей
-function getAssemblyName(list, prj_item) {
-    let result = [];
-    for (let i = 0; i < list.Count; i++) {
-        const item = list[i];
-        if (
-            (item instanceof TFurnBlock || item instanceof TDraftBlock) &&
-            !item.JointData &&
-            item.IsAssemblyUnit === true
-        ) {
-            const sbName = transliterate(item.Name);
-            const sign = transliterate(prj_item.sign);
-            const prjName = transliterate(PROJECT_NAME);
-
-            const delimPrjName = settings.delimPrjName;
-            const delimPrjSign = settings.delimPrjSign;
-            const modelDrawName = `${prjName}${delimPrjName}${sign}_SB`;
-            const drawName = `${modelDrawName}_na_${sbName}`;
-
-            const UID = item.UID;
-            let panelMaterialsAU = prj_item.data.panelMaterials.filter(item => {
-                return item.assemblyUnit && item.assemblyUnit.UID === UID;
-            });
-
-            result.push({
-                prjName: PROJECT_NAME,
-                items: {
-                    panelMaterials: panelMaterialsAU
-                },
-                cloudLink: prj_item.cloudLink,   //  Ссылка на облако
-                sign: prj_item.sign,
-                drawName: drawName,             //  Название СБ (тр-лит.)
-                auName: item.Name,              //  Название СБ
-                modelName: prj_item.modelName,  //  Название модели
-                modelDrawName: modelDrawName    //  Название схемы сборки (тр-лит.)
-
-            });
-        };
-    };
-    return result;
 };
 
 //#endregion
@@ -1662,6 +1575,50 @@ function aggregateMaterials(prj_arr) {
         }
     }
 
+    return result;
+};
+
+//  Функция для получения данных сборочных чертежей
+function getAssemblyName(list, prj_item) {
+    let result = [];
+    for (let i = 0; i < list.Count; i++) {
+        const item = list[i];
+        if (
+            (item instanceof TFurnBlock || item instanceof TDraftBlock) &&
+            !item.JointData &&
+            item.IsAssemblyUnit === true
+        ) {
+            const sbName = transliterate(item.Name);
+            const sign = transliterate(prj_item.sign);
+            const prjName = transliterate(PROJECT_NAME);
+
+            const delimPrjName = settings.delimPrjName;
+            const delimPrjSign = settings.delimPrjSign;
+            const modelDrawName = `${prjName}${delimPrjName}${sign}_SB`;
+            const drawName = `${modelDrawName}_na_${sbName}`;
+
+            const UID = item.UID;
+            let panelMaterialsAU = prj_item.data.panelMaterials.filter(item => {
+                return item.assemblyUnit && item.assemblyUnit.UID === UID;
+            });
+
+            result.push({
+                prjName: PROJECT_NAME,
+                auArtPos: item.ArtPos,          //  Позиция СБЕ
+                auDesignation: item.Designation,//  Обозначение СБЕ
+                cloudLink: prj_item.cloudLink,  //  Ссылка на облако
+                sign: prj_item.sign,            //  Обозначение в проекте изд.
+                drawName: drawName,             //  Название СБ (tr)
+                auName: item.Name,              //  Название СБ
+                modelName: prj_item.modelName,  //  Название модели
+                modelDrawName: modelDrawName,   //  Название схемы сборки (tr)
+                items: {
+                    panelMaterials: panelMaterialsAU,
+                    profileMaterials: []
+                },
+            });
+        };
+    };
     return result;
 };
 
@@ -3896,14 +3853,18 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             sheet = '1',
             totalSheets = '1',
             margin = 5 * mm,
-            fontSize = 8,
+            fontSize = 9,
             font = 'Arial'
         } = options;
+
+        const auSign = data.auDesignation;
+        const auPos = data.auArtPos;
 
         // Твои размеры
         const ch = 7 * mm;
         const cw = 99 * mm;
         const squareSize = 21 * mm;
+        const m_border = [1.5, 1.5, 1.5, 1.5];
 
         // Координаты правого нижнего угла штампа
         let x = pageWidth - margin - cw - squareSize;
@@ -3919,24 +3880,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize,
             bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
-        });
-
-        //  Название проекта / обозначение изделия в проекте
-        drawCell(doc, {
-            x: pageWidth - margin - 45 * mm,
-            y: margin,
-            width: 45 * mm,
-            height: 7 * mm,
-            text: `${data.prjName} / ${data.sign}`,
-            fontName: font,
-            fontSize: fontSize + 4,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
+            border: m_border,
         });
 
         //  Название модели
@@ -3948,10 +3892,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             text: `${data.modelName}`,
             fontName: font,
             fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
+            border: m_border,
         });
 
         //  Дата печати отчетов
@@ -3963,10 +3904,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             text: `Дата печати: ${formatDate(new Date())} г.`,
             fontName: font,
             fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
+            border: m_border,
         });
 
         //  Лист / кол-во листов
@@ -3978,10 +3916,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             text: `Лист ${sheet} / ${totalSheets}`,
             fontName: font,
             fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
+            border: m_border,
         });
 
         // Квадрат справа от штампа
@@ -3990,9 +3925,23 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             y: pageHeight - margin - squareSize,
             width: squareSize,
             height: squareSize,
-            text: '',
+            text: `${auSign ? auSign : auPos}`,
             fontName: font,
-            border: [1.5, 1.5, 1.5, 1.5],
+            fontSize: 24,
+            border: m_border,
+        });
+
+        //  Прямоугольник вверху слева
+        drawCell(doc, {
+            x: pageWidth - margin - 45 * mm,
+            y: margin,
+            width: 45 * mm,
+            height: 7 * mm,
+            text: `${data.prjName} / ${data.sign}`,
+            fontName: font,
+            fontSize: fontSize + 4,
+            bold: true,
+            border: m_border,
         });
     };
 
@@ -4012,6 +3961,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         const ch = 7 * mm;
         const cw = 99 * mm;
         const squareSize = 21 * mm;
+        const m_border = [1.5, 1.5, 1.5, 1.5];
 
         const width_header = pageWidth - 2 * margin - 90 * mm;
         const x_header = (pageWidth - width_header) / 2;
@@ -4026,10 +3976,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             text: `Схема сборки`,
             fontName: fontName,
             fontSize: fontSize + 6,
-            //border: [0.5, 0.5, 0.5, 0.5],
             bold: true,
-            align: 'center',
-            valign: 'center'
         });
 
         //  Добавляем название изделия
@@ -4041,10 +3988,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             text: `${data.modelName}`,
             fontName: fontName,
             fontSize: fontSize + 6,
-            //border: [0.5, 0.5, 0.5, 0.5],
             bold: true,
-            align: 'center',
-            valign: 'center'
         });
 
         // Координаты правого нижнего угла штампа
@@ -4061,9 +4005,55 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize,
             bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
+            border: m_border,
+        });
+
+        //  Название модели
+        drawCell(doc, {
+            x: x,
+            y: y + ch,
+            width: cw,
+            height: ch,
+            text: `${data.modelName}`,
+            fontName: font,
+            fontSize: fontSize,
+            border: m_border,
+        });
+
+        //  Дата печати отчетов
+        drawCell(doc, {
+            x: x,
+            y: y + 2 * ch,
+            width: cw - 24 * mm,
+            height: ch,
+            text: `Дата печати: ${formatDate(new Date())} г.`,
+            fontName: font,
+            fontSize: fontSize,
+            border: m_border,
+        });
+
+        //  Лист / кол-во листов
+        drawCell(doc, {
+            x: x + cw - 24 * mm,
+            y: y + 2 * ch,
+            width: 24 * mm,
+            height: ch,
+            text: `Лист ${sheet} / ${totalSheets}`,
+            fontName: font,
+            fontSize: fontSize,
+            border: m_border,
+        });
+
+        // Квадрат справа от штампа
+        drawCell(doc, {
+            x: pageWidth - margin - squareSize,
+            y: pageHeight - margin - squareSize,
+            width: squareSize,
+            height: squareSize,
+            text: `${data.sign}`,
+            fontName: font,
+            fontSize: 24,
+            border: m_border,
         });
 
         //  Название проекта / обозначение изделия в проекте
@@ -4076,65 +4066,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
             fontName: font,
             fontSize: fontSize + 4,
             bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
-        });
-
-        //  Название модели
-        drawCell(doc, {
-            x: x,
-            y: y + ch,
-            width: cw,
-            height: ch,
-            text: `${data.modelName}`,
-            fontName: font,
-            fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
-        });
-
-        //  Дата печати отчетов
-        drawCell(doc, {
-            x: x,
-            y: y + 2 * ch,
-            width: cw - 24 * mm,
-            height: ch,
-            text: `Дата печати: ${formatDate(new Date())} г.`,
-            fontName: font,
-            fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
-        });
-
-        //  Лист / кол-во листов
-        drawCell(doc, {
-            x: x + cw - 24 * mm,
-            y: y + 2 * ch,
-            width: 24 * mm,
-            height: ch,
-            text: `Лист ${sheet} / ${totalSheets}`,
-            fontName: font,
-            fontSize: fontSize,
-            bold: true,
-            border: [1.5, 1.5, 1.5, 1.5],
-            align: 'center',
-            valign: 'center'
-        });
-
-        // Квадрат справа от штампа
-        drawCell(doc, {
-            x: pageWidth - margin - squareSize,
-            y: pageHeight - margin - squareSize,
-            width: squareSize,
-            height: squareSize,
-            text: '',
-            fontName: font,
-            border: [1.5, 1.5, 1.5, 1.5],
+            border: m_border,
         });
     };
 
@@ -4409,10 +4341,10 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
 
         //  3. Чертеж
         const drawWidth = (120 - 5) * mm;
-        const drawHeight = (160 * mm);
+        const drawHeight = (163 * mm);
         addImageFixedWidth(doc, {
             x: pageWidth - drawWidth - margin - 5 * mm,
-            y: margin + (5 + 7) * mm,
+            y: margin + (5 + 5) * mm,
             containerWidth: drawWidth,
             containerHeight: drawHeight,
             imagePath: path.join(
@@ -4426,6 +4358,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         createAUPartsTable(doc, options);
     };
 
+    //  Функция создания QR-кода
     async function addQRCode(doc, options = {}) {
         const {
             data,
@@ -4586,11 +4519,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         } = options;
 
         if (!isFirstPage) {
-            doc.addPage({
-                size: 'A4',
-                layout: orientation,
-                margin: 0
-            });
+            doc.addPage({ size: 'A4', layout: orientation, margin: 0 });
         };
 
         const pageWidth = doc.page.width;
@@ -4633,8 +4562,8 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         if (data.cloudLink) {
             await addQRCode(doc, {
                 data: data.cloudLink,
-                x: margin + 5 * mm,
-                y: margin + 5 * mm,
+                x: margin + 4 * mm,
+                y: margin + 4 * mm,
                 size: 20 * mm,
                 debug: false
             });
@@ -4683,9 +4612,12 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
         //  Проверяем существование общего сборочного чертежа
         const sbImagePath = path.join(settings.drawDIR, 'png', array[0].modelDrawName + '.png');
 
-        let counter = 0;
+        let unionDraw = 0;
+        let totalPages = array.length;
+
         if (fs.existsSync(sbImagePath)) {
-            counter++;
+            unionDraw = 1;
+            totalPages++;
             const sbData = array[0];
             // Запускаем создание общего сборочного чертежа
             await createUnionDrawingSheet(doc, {
@@ -4703,7 +4635,7 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 fontName: fontName,
                 designation: sbData.sign,
                 sheet: String(1),
-                totalSheets: String(array.length + counter)
+                totalSheets: String(totalPages)
             });
         };
 
@@ -4714,12 +4646,11 @@ async function createPDFAssemblyDrawings(assembly_array, settings) {
                 title: aUnit.drawName,
                 margin: 5 * mm,
                 orientation: 'landscape',
-                isFirstPage: counter === 0,
+                isFirstPage: unionDraw === 0,
                 fontName: fontName,
                 designation: aUnit.sign || '',
-                scale: aUnit.scale || '1:1',
-                sheet: String(i + counter + 1),
-                totalSheets: String(array.length + counter)
+                sheet: String(i + unionDraw + 1),
+                totalSheets: String(totalPages)
             });
         };
         await savePDF(doc, filePath);
@@ -4903,13 +4834,12 @@ async function main() {
                 const pictureBool = await convertPDFtoPNG(drawNames, settings.drawDIR);
                 if (!pictureBool) console.log('Картинки сборочных чертежей не созданы.');
 
-
                 await createPDFAssemblyDrawings(assembly_array, settings);
             } catch (e) {
                 errFinish('Ошибка создания сборочных чертежей: ' + e.message);
             };
 
-            Action.Finish();    //  Временная заглушка
+            //Action.Finish();    //  Временная заглушка
 
             try {
                 Action.Hint = `Сохраняем калькуляцию проекта...`;
