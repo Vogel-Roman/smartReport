@@ -1,2 +1,5 @@
 # Игнорируется папка node_modules
 node_modules
+
+# Игнорируем файлы лицензий
+*.license.dat

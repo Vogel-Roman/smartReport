@@ -16,6 +16,51 @@ const PDFDocument = require('pdfkit');
 const QRCode = require("qrcode");
 const { XMLParser } = require('fast-xml-parser');
 
+//#region Обходы багов node-firebird 0.1.4
+/*  Пакет старый (обновлять нельзя — сломается совместимость с Базисом), в нём
+    два дефекта, вылезающие на реальных машинах клиентов. Чиним в рантайме,
+    не трогая node_modules: правки там теряются при переустановке зависимостей.  */
+
+/*  1. lib/serialize.js, BlrWriter.addString: длина строки объявляется в БАЙТАХ
+       (Buffer.byteLength), а записывается s.length СИМВОЛОВ. Для латиницы это
+       одно и то же, для кириллицы — нет. В блок подключения идут имя пользователя
+       Windows и имя компьютера, поэтому у клиента с учёткой вроде "Александр"
+       подключение падает с "Invalid clumplet buffer structure: string length
+       doesn't match with clumplet".                                            */
+(function patchBlrAddString() {
+    try {
+        const serialize = require('node-firebird/lib/serialize');
+        const proto = serialize.BlrWriter && serialize.BlrWriter.prototype;
+        if (!proto || !proto.addString) return;
+        proto.addString = function (c, s, encoding) {
+            this.addByte(c);
+            const len = Buffer.byteLength(s, encoding);
+            if (len > 255) throw new Error('blr string is too big');
+            this.ensure(len + 1);
+            this.buffer.writeUInt8(len, this.pos);
+            this.pos++;
+            this.buffer.write(s, this.pos, len, encoding);   //  len, а не s.length
+            this.pos += len;
+        };
+    } catch (e) { }
+})();
+
+/*  2. lib/messages.js: buffer.toString(null, ...) — современный Node бросает
+       "Unknown encoding: null". Код читает тексты ошибок Firebird, то есть
+       выполняется только когда что-то уже пошло не так: настоящая причина
+       теряется, колбэк не приходит, скрипт виснет. Подменяем null на latin1.   */
+(function patchBufferToString() {
+    const orig = Buffer.prototype.toString;
+    Buffer.prototype.toString = function (enc) {
+        if (enc === null) {
+            const rest = Array.prototype.slice.call(arguments, 1);
+            return orig.apply(this, ['latin1'].concat(rest));
+        }
+        return orig.apply(this, arguments);
+    };
+})();
+//#endregion
+
 //#region Инициализация
 
 //  Массивы наименований материалов для поиска в БД
